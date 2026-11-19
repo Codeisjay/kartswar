@@ -77,7 +77,7 @@ export default function SettingsPanel({ settings, onChange, onBack }: { settings
             <span>Drift (hold, release for mini-turbo)</span>
             <b className="text-yellow-300">Shift</b>
             <span>Boost</span>
-            <b className="text-yellow-300">Left click</b>
+            <b className="text-yellow-300">F</b>
             <span>Fire weapon straight ahead (hold for auto-fire)</span>
             <b className="text-yellow-300">Esc / P</b>
             <span>Pause</span>

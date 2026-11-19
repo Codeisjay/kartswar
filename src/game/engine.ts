@@ -237,7 +237,6 @@ export class Game {
 
   // input
   private keys = new Set<string>();
-  private mouseDown = false;
   private touch: TouchInput | null = null;
   private tmpV = new THREE.Vector3();
 
@@ -338,8 +337,6 @@ export class Game {
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
     window.addEventListener("blur", this.onBlur);
-    window.addEventListener("mousedown", this.onMouseDown);
-    window.addEventListener("mouseup", this.onMouseUp);
     window.addEventListener("contextmenu", this.onContext);
 
     audio.init();
@@ -368,7 +365,7 @@ export class Game {
     }
     const team0Bots = Math.ceil((roster.length + 1) / 2) - 1;
     roster.forEach((r, i) => {
-      const skill = cfg.settings.difficulty === "easy" ? 0.4 : cfg.settings.difficulty === "hard" ? 0.92 : 0.66;
+      const skill = cfg.settings.difficulty === "easy" ? 0.3 : cfg.settings.difficulty === "hard" ? 0.75 : 0.5;
       const team = mode === "team" ? (i < team0Bots ? 0 : 1) : -1;
       const k = this.makeKart({ name: r.name, avatar: r.avatar, preset: KART_PRESETS[r.kartId % KART_PRESETS.length], isPlayer: false, team, skill: clamp(skill + (Math.random() - 0.5) * 0.18, 0.2, 1) });
       this.placeKart(k, spawnOrder[(i + 1) % spawnOrder.length]);
@@ -406,7 +403,7 @@ export class Game {
     const k: Kart = {
       id: this.nextId++, name: o.name, avatar: o.avatar, isPlayer: o.isPlayer, team: o.team, preset: o.preset, rig, tag, tagBar: fill,
       x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, heading: 0, grounded: true, slopeVy: 0, steerCur: 0, pitch: 0, roll: 0,
-      speedF: o.isPlayer ? 1 : 0.84 + o.skill * 0.14,
+      speedF: o.isPlayer ? 1 : 0.78 + o.skill * 0.12,
       stats: { speed: o.preset.speed, handling: o.preset.handling, armor: o.preset.armor },
       hp: 100, maxHp: 100, shield: 0, boostT: 0, boostMeter: 0.5, boosting: false, drifting: false, driftDir: 1, driftT: 0, driftLevel: 0,
       weapon: null, ammo: 0, cooldown: 0, alive: false, noRespawn: false, respawnT: 0, invuln: 0,
@@ -495,8 +492,6 @@ export class Game {
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
     window.removeEventListener("blur", this.onBlur);
-    window.removeEventListener("mousedown", this.onMouseDown);
-    window.removeEventListener("mouseup", this.onMouseUp);
     window.removeEventListener("contextmenu", this.onContext);
     audio.stopEngine();
     audio.stopMusic();
@@ -524,16 +519,6 @@ export class Game {
   };
   private onBlur = () => {
     this.keys.clear();
-    this.mouseDown = false;
-  };
-  private onMouseDown = (e: MouseEvent) => {
-    if (e.button !== 0) return;
-    if ((e.target as HTMLElement | null)?.closest("[data-ui]")) return;
-    this.mouseDown = true;
-    audio.init();
-  };
-  private onMouseUp = (e: MouseEvent) => {
-    if (e.button === 0) this.mouseDown = false;
   };
   private onContext = (e: Event) => e.preventDefault();
 
@@ -584,11 +569,11 @@ export class Game {
     return { throttle, steer, drift, boost };
   }
 
-  // LEFT MOUSE BUTTON is the only firing input on desktop (touch uses its own
-  // FIRE button). No keyboard key fires a weapon: Space stays drift-only.
+  // F key fires on desktop (touch uses its own FIRE button). No mouse input
+  // is used at all: driving, drifting, boosting and firing are keyboard-only.
   private sampleFire() {
     if (this.touch) return this.touch.fire;
-    return this.mouseDown;
+    return this.keys.has("KeyF");
   }
 
   // Fixed forward firing: weapons always shoot straight out of the front of
@@ -1511,7 +1496,9 @@ export class Game {
       this.sfxAt("shield", v.x, v.z, 0.4);
       return;
     }
-    const dmg = amt / v.stats.armor;
+    // Bots hit softer against the human player so fights feel fair.
+    const soft = atk && !atk.isPlayer && v.isPlayer ? 0.6 : 1;
+    const dmg = (amt * soft) / v.stats.armor;
     v.hp -= dmg;
     if (atk && atk !== v) {
       v.lastHitBy = atk.id;
@@ -1701,7 +1688,7 @@ export class Game {
     this.wave++;
     this.waveState = "fighting";
     const n = Math.min(2 + this.wave, 7);
-    const skill = clamp(0.32 + this.wave * 0.08, 0.3, 1);
+    const skill = clamp(0.25 + this.wave * 0.06, 0.25, 0.85);
     const pool = this.cfg.roster.length ? this.cfg.roster : [{ name: "Bot", avatar: "🤖", kartId: 1 }];
     const spawns = [...this.arena.spawns.keys()].sort((a, b) => {
       const pa = this.arena.spawns[a];

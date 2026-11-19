@@ -130,7 +130,7 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
   const isTouch = cfg.touch;
 
   return (
-    <div className="absolute inset-0 overflow-hidden bg-black" style={{ cursor: isTouch ? "default" : "crosshair" }}>
+    <div className="absolute inset-0 overflow-hidden bg-black">
       <div ref={mountRef} className="absolute inset-0" />
       <div ref={overlayRef} className="pointer-events-none absolute inset-0 overflow-hidden" />
 
@@ -294,7 +294,7 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
               </div>
               <div className={`kw-panel mt-6 px-5 py-3 text-center text-sm text-slate-200 ${isTouch ? "hidden" : "hidden sm:block"}`}>
                 <b className="text-cyan-300">WASD</b> drive · <b className="text-cyan-300">SPACE</b> drift (release for turbo) · <b className="text-cyan-300">SHIFT</b> boost ·{" "}
-                <b className="text-cyan-300">CLICK</b> fire (shoots forward)
+                <b className="text-cyan-300">F</b> fire (shoots forward)
               </div>
             </div>
           )}

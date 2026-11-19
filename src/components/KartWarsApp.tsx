@@ -130,7 +130,7 @@ export default function KartWarsApp() {
             <b>{profile.name || "Driver"}</b>
             {best > 0 && <span className="ml-2 text-yellow-300">Best {best.toLocaleString()}</span>}
           </div>
-          <div className="absolute bottom-3 right-3 hidden text-[11px] text-slate-400 sm:block">WASD drive · SPACE drift · SHIFT boost · CLICK fire (shoots forward)</div>
+          <div className="absolute bottom-3 right-3 hidden text-[11px] text-slate-400 sm:block">WASD drive · SPACE drift · SHIFT boost · F fire (shoots forward)</div>
         </div>
       )}
 

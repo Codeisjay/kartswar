@@ -63,6 +63,7 @@ export function updateBot(g: Game, k: Kart, s: BotState, dt: number, active: boo
       if (!o.alive || !g.isEnemy(k, o)) continue;
       const d = Math.hypot(o.x - k.x, o.z - k.z);
       let sc = d - (o.hp < 40 ? 12 : 0) - (o.isPlayer && g.mode === "survival" ? 18 : 0);
+      if (o.isPlayer && g.mode !== "survival") sc += 24; // bots prefer fighting each other over bullying the player
       if (o.invuln > 0) sc += 40;
       if (sc < bs) {
         bs = sc;
@@ -187,7 +188,7 @@ export function updateBot(g: Game, k: Kart, s: BotState, dt: number, active: boo
   if (t) {
     if (s.aimT <= 0) {
       s.aimT = 0.3;
-      const e = (1 - s.skill) * 4.5 + 0.4;
+      const e = (1 - s.skill) * 7 + 1.2;
       s.offX = (Math.random() - 0.5) * e * 2;
       s.offZ = (Math.random() - 0.5) * e * 2;
     }
@@ -196,15 +197,15 @@ export function updateBot(g: Game, k: Kart, s: BotState, dt: number, active: boo
       s.los = g.hasLOS(k.x, k.z, t.x, t.z, k.y + 0.8);
     }
     const proj = w === "mg" ? 90 : w === "rocket" ? 52 : 40;
-    const lead = dT / proj;
-    inp.aimX = t.x + t.vx * lead * s.skill + s.offX;
-    inp.aimZ = t.z + t.vz * lead * s.skill + s.offZ;
+    const lead = (dT / proj) * s.skill * 0.6;
+    inp.aimX = t.x + t.vx * lead + s.offX;
+    inp.aimZ = t.z + t.vz * lead + s.offZ;
   }
   if (w) {
-    const slowReact = 0.4 + (1.3 - s.skill) * 0.9;
+    const slowReact = 0.8 + (1.3 - s.skill) * 1.4;
     switch (w) {
       case "rocket":
-        if (t && dT < 55 && dT > 7 && s.los && s.reactT <= 0) {
+        if (t && dT < 42 && dT > 7 && s.los && s.reactT <= 0) {
           inp.fire = true;
           s.reactT = slowReact + Math.random() * 0.5;
         }
@@ -213,13 +214,13 @@ export function updateBot(g: Game, k: Kart, s: BotState, dt: number, active: boo
         s.burstT -= dt;
         if (s.burstT <= 0) {
           s.burstOn = !s.burstOn;
-          s.burstT = s.burstOn ? 0.7 + Math.random() * 0.8 : 0.25 + Math.random() * 0.5 * (1.4 - s.skill);
+          s.burstT = s.burstOn ? 0.45 + Math.random() * 0.5 : 0.6 + Math.random() * 0.9 * (1.6 - s.skill);
         }
-        if (t && dT < 32 && s.los && s.burstOn && s.reactT <= 0) inp.fire = true;
+        if (t && dT < 24 && s.los && s.burstOn && s.reactT <= 0) inp.fire = true;
         if (t && dT < 32 && s.los && s.reactT > 0 && s.reactT < 0.05) s.reactT = 0;
         break;
       case "bomb":
-        if (t && dT > 9 && dT < 36 && s.reactT <= 0) {
+        if (t && dT > 9 && dT < 30 && s.reactT <= 0) {
           inp.fire = true;
           s.reactT = slowReact + 0.6;
         }

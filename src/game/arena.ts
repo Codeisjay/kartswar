@@ -453,13 +453,11 @@ export function buildArena(scene: THREE.Scene, quality: "low" | "medium" | "high
       block(sx * 26 - 1.5, sx * 26 + 1.5, sz * 20 - 5, sz * 20 + 5, 2.2, "bench");
     }
   }
-  block(-7, 7, 28.5, 31.5, 2.2, "bench");
-  block(-7, 7, -31.5, -28.5, 2.2, "bench");
-  // cover blocks
+  // (center benches removed to keep the north/south drive lines open)
+  // cover blocks (halved: only the outer set, so lanes stay open)
   for (const sx of [-1, 1]) {
     for (const sz of [-1, 1]) {
       block(sx * 58 - 2, sx * 58 + 2, sz * 22 - 2, sz * 22 + 2, 1.8, "cover");
-      block(sx * 20 - 2, sx * 20 + 2, sz * 60 - 2, sz * 60 + 2, 1.8, "cover");
     }
   }
 
@@ -503,9 +501,9 @@ export function buildArena(scene: THREE.Scene, quality: "low" | "medium" | "high
   const free = (x: number, z: number, margin: number) => {
     if (Math.abs(x) > half - 4 || Math.abs(z) > half - 4) return false;
     for (const s of surfaces) if (x > s.x0 - margin - 1 && x < s.x1 + margin + 1 && z > s.z0 - margin - 1 && z < s.z1 + margin + 1) return false;
-    for (const c of circles) if (Math.hypot(c.x - x, c.z - z) < c.r + margin + 0.6) return false;
-    for (const p of spawns) if (Math.hypot(p.x - x, p.z - z) < 7) return false;
-    for (const p of pickupSpots) if (Math.hypot(p.x - x, p.z - z) < 4) return false;
+    for (const c of circles) if (Math.hypot(c.x - x, c.z - z) < c.r + margin + 1.2) return false;
+    for (const p of spawns) if (Math.hypot(p.x - x, p.z - z) < 8.5) return false;
+    for (const p of pickupSpots) if (Math.hypot(p.x - x, p.z - z) < 5) return false;
     return true;
   };
 
@@ -567,16 +565,16 @@ export function buildArena(scene: THREE.Scene, quality: "low" | "medium" | "high
     for (let tries = 0; tries < 60 && placed < n; tries++) {
       const x = cx + (rnd() - 0.5) * spread * 2;
       const z = cz + (rnd() - 0.5) * spread * 2;
-      if (free(x, z, kind === "crate" ? 1.2 : 0.8)) {
+      if (free(x, z, kind === "crate" ? 1.5 : 1.0)) {
         spawnProp(kind, x, z);
         placed++;
       }
     }
   };
 
-  for (const [x, z] of [[-42, -22], [42, 22], [-42, 24], [42, -24], [0, -64 + 14], [0, 64 - 14], [-30, 0], [30, 0]] as [number, number][]) scatter("crate", x, z, 4, 4);
-  for (const [x, z] of [[20, -12], [-20, 12], [22, 38], [-22, -38], [-52, -40], [52, 40], [-8, 0 + 50 - 14], [8, -50 + 14]] as [number, number][]) scatter("barrel", x, z, 3, 3.5);
-  for (const [x, z] of [[0, 24], [0, -24], [16, 16], [-16, -16], [16, -16], [-16, 16], [50, 14], [-50, -14], [60, -10], [-60, 10]] as [number, number][]) scatter("cone", x, z, 4, 3);
+  for (const [x, z] of [[-42, -22], [42, 22], [-42, 24], [42, -24], [0, -64 + 14], [0, 64 - 14], [-30, 0], [30, 0]] as [number, number][]) scatter("crate", x, z, 2, 4);
+  for (const [x, z] of [[20, -12], [-20, 12], [22, 38], [-22, -38], [-52, -40], [52, 40], [-8, 0 + 50 - 14], [8, -50 + 14]] as [number, number][]) scatter("barrel", x, z, 2, 3.5);
+  for (const [x, z] of [[0, 24], [0, -24], [16, 16], [-16, -16], [16, -16], [-16, 16], [50, 14], [-50, -14], [60, -10], [-60, 10]] as [number, number][]) scatter("cone", x, z, 2, 3);
 
   // city-style neon signs on the walls
   const signTex = (txt: string, col: string) =>
