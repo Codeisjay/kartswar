@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Game } from "@/game/engine";
 import { addScore, loadScores, type ScoreEntry } from "@/game/storage";
-import { TEAM_COLORS, WEAPONS, type GameConfig, type GameEvent, type HudState, type KillEntry, type MatchResult } from "@/game/types";
+import { saveTutorialProgress } from "@/game/storage";
+import { TEAM_COLORS, WEAPONS, type GameConfig, type GameEvent, type HudState, type KillEntry, type MatchResult, type TutorialState } from "@/game/types";
 import TouchControls from "./TouchControls";
 import ScoreTable from "./Scores";
+import { HelpOverlay, TUTORIAL_STEPS, TutorialOverlay } from "./Guidance";
 
 interface Props {
   cfg: GameConfig;
@@ -20,6 +22,7 @@ const fmt = (s: number) => {
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
 export default function GameView({ cfg, onExit, onRestart }: Props) {
+  const isTouch = cfg.touch;
   const mountRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
   const miniRef = useRef<HTMLCanvasElement>(null);
@@ -32,17 +35,31 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
   const [hurtKey, setHurtKey] = useState(0);
   const [hit, setHit] = useState<{ id: number; kill: boolean } | null>(null);
   const [paused, setPaused] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [vol, setVol] = useState(cfg.settings.master);
   const [result, setResult] = useState<{ r: MatchResult; scores: ScoreEntry[]; rank: number } | null>(null);
   const [bestBefore, setBestBefore] = useState(0);
+  const [pressedKeys, setPressedKeys] = useState<Set<string>>(() => new Set());
+  const [tutorialStep, setTutorialStep] = useState(cfg.tutorialStep ?? 0);
+  const [tutorialState, setTutorialState] = useState<TutorialState | null>(null);
+  const [contextTip, setContextTip] = useState<string | null>(
+    cfg.tutorial ? null : cfg.touch ? "LEFT STICK STEERS · AUTO-GAS" : "W / ↑ ACCELERATE · SPACE DRIFT · SHIFT BOOST · F FIRE",
+  );
 
   const handleEvent = useCallback((e: GameEvent) => {
     const id = performance.now();
     if (e.type === "hurt") setHurtKey((k) => k + 1);
     else if (e.type === "hit") setHit({ id, kill: e.kill });
-    else if (e.type === "banner") setBanner({ id, text: e.text, sub: e.sub, color: e.color });
-    else if (e.type === "pickup") setToast({ id, text: e.text, color: e.color });
-  }, []);
+    else if (e.type === "banner") {
+      setBanner({ id, text: e.text, sub: e.sub, color: e.color });
+      if (e.text === "LAVA!") setContextTip("AVOID THE LAVA! GET BACK ON SOLID GROUND");
+    } else if (e.type === "pickup") {
+      setToast({ id, text: e.text, color: e.color });
+      if (e.text.includes("SHIELD")) setContextTip(isTouch ? "SHIELD EQUIPPED · HOLD FIRE TO ACTIVATE" : "SHIELD EQUIPPED · HOLD F TO ACTIVATE");
+      else if (e.text.includes("REPAIR")) setContextTip("HULL REPAIRED · KEEP MOVING");
+      else setContextTip("POWER-UP COLLECTED · CHECK WEAPON, AMMO & COOLDOWN");
+    }
+  }, [isTouch]);
 
   useEffect(() => {
     if (!mountRef.current || !overlayRef.current) return;
@@ -50,6 +67,7 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
     setBestBefore(best);
     const game = new Game(mountRef.current, overlayRef.current, miniRef.current, cfg, {
       onHud: setHud,
+      onTutorialState: setTutorialState,
       onKill: (k) => setKills((prev) => [...prev.slice(-4), k]),
       onEvent: handleEvent,
       onEnd: (r) => {
@@ -66,6 +84,15 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
       gameRef.current = null;
     };
   }, [cfg, handleEvent]);
+
+  useEffect(() => {
+    if (cfg.tutorial) gameRef.current?.setTutorialStep(tutorialStep);
+  }, [cfg.tutorial, tutorialStep]);
+
+  useEffect(() => {
+    if (!cfg.tutorial) return;
+    saveTutorialProgress({ seen: true, completed: false, step: tutorialStep });
+  }, [cfg.tutorial, tutorialStep]);
 
   // expire kill feed
   useEffect(() => {
@@ -87,6 +114,11 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
     return () => clearTimeout(t);
   }, [toast]);
   useEffect(() => {
+    if (!contextTip) return;
+    const t = window.setTimeout(() => setContextTip(null), 4500);
+    return () => clearTimeout(t);
+  }, [contextTip]);
+  useEffect(() => {
     if (!hit) return;
     const t = window.setTimeout(() => setHit(null), 320);
     return () => clearTimeout(t);
@@ -100,6 +132,12 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      setPressedKeys((previous) => {
+        if (previous.has(e.code)) return previous;
+        const next = new Set(previous);
+        next.add(e.code);
+        return next;
+      });
       if (e.code === "Escape" || e.code === "KeyP") {
         e.preventDefault();
         if (!resultRef.current) setPause(!(gameRef.current?.isPaused() ?? false));
@@ -109,6 +147,14 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
         onRestart();
       }
     };
+    const onKeyUp = (e: KeyboardEvent) => {
+      setPressedKeys((previous) => {
+        if (!previous.has(e.code)) return previous;
+        const next = new Set(previous);
+        next.delete(e.code);
+        return next;
+      });
+    };
     const onBlur = () => {
       if (!resultRef.current) setPause(true);
     };
@@ -116,18 +162,48 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
       if (document.hidden) onBlur();
     };
     window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
     window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onVis);
     return () => {
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [onRestart, setPause]);
 
+  const tutorialProgress = (() => {
+    if (!cfg.tutorial || !tutorialState) return { canContinue: false, detail: "Waiting for controls…" };
+    switch (tutorialStep) {
+      case 0: return { canContinue: tutorialState.throttle > 0 && tutorialState.speed >= 8, detail: `Speed ${Math.round(tutorialState.speed)} / 8 KM/H` };
+      case 1: return { canContinue: tutorialState.steeredLeft && tutorialState.steeredRight, detail: "Turn both directions" };
+      case 2: return { canContinue: tutorialState.reversed, detail: "Reverse to continue" };
+      case 3: return { canContinue: tutorialState.distance >= 25, detail: `${Math.min(25, Math.round(tutorialState.distance))} / 25 M` };
+      case 4: return { canContinue: tutorialState.boosting, detail: "Hold boost" };
+      case 5: return { canContinue: tutorialState.distance >= 60, detail: `${Math.min(60, Math.round(tutorialState.distance))} / 60 M` };
+      case 6: return { canContinue: tutorialState.targetInRange, detail: "Face the cyan practice target" };
+      case 7: return { canContinue: tutorialState.targetHits > 0, detail: "Land a hit on the target" };
+      case 8: return { canContinue: tutorialState.pickupCount > 0 && tutorialState.weapon === "shield", detail: "Collect the shield box" };
+      case 9: return { canContinue: tutorialState.shield > 0, detail: "Hold fire to activate shield" };
+      default: return { canContinue: false, detail: "Complete the objective" };
+    }
+  })();
+
+  const changeTutorialStep = (next: number) => {
+    setTutorialStep(Math.max(0, Math.min(TUTORIAL_STEPS.length - 1, next)));
+  };
+  const skipTutorial = () => {
+    saveTutorialProgress({ seen: true, completed: true, step: TUTORIAL_STEPS.length - 1 });
+    onExit();
+  };
+  const finishTutorial = () => {
+    saveTutorialProgress({ seen: true, completed: true, step: TUTORIAL_STEPS.length });
+    onExit();
+  };
+
   const hpPct = hud ? (hud.hp / hud.maxHp) * 100 : 100;
   const w = hud?.weapon ? WEAPONS[hud.weapon.id] : null;
-  const isTouch = cfg.touch;
 
   return (
     <div className="absolute inset-0 overflow-hidden bg-black">
@@ -193,6 +269,9 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
           <div className="absolute right-3 top-3 z-20 flex w-56 flex-col items-end gap-2">
             <div className="flex items-center gap-2">
               {cfg.settings.showFps && <span className="rounded bg-black/50 px-2 py-0.5 text-[11px] text-green-300">{hud.fps} FPS</span>}
+              <button data-ui onClick={() => setHelpOpen(true)} className="kw-chip pointer-events-auto h-9 px-2 text-xs font-bold" aria-label="Help and controls">
+                HELP
+              </button>
               <button data-ui onClick={() => setPause(true)} className="kw-chip pointer-events-auto h-9 w-9 text-sm font-bold" aria-label="Pause">
                 ❚❚
               </button>
@@ -325,6 +404,30 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
         </div>
       )}
 
+      {contextTip && !paused && !result && !cfg.tutorial && (
+        <div className="pointer-events-none absolute left-1/2 top-[16%] z-20 -translate-x-1/2">
+          <div className="rounded-full border border-cyan-300/25 bg-black/50 px-3 py-1 text-center text-[10px] font-bold tracking-wider text-cyan-100 backdrop-blur-sm sm:text-xs">
+            {contextTip}
+          </div>
+        </div>
+      )}
+
+      {cfg.tutorial && !paused && !result && tutorialState && (
+        <TutorialOverlay
+          stepIndex={tutorialStep}
+          state={tutorialState}
+          touch={isTouch}
+          pressedKeys={pressedKeys}
+          objectiveProgress={tutorialProgress.detail}
+          canContinue={tutorialProgress.canContinue}
+          onBack={() => changeTutorialStep(tutorialStep - 1)}
+          onNext={() => changeTutorialStep(tutorialStep + 1)}
+          onSkipStep={() => tutorialStep === TUTORIAL_STEPS.length - 1 ? finishTutorial() : changeTutorialStep(tutorialStep + 1)}
+          onSkipTutorial={skipTutorial}
+          onFinish={finishTutorial}
+        />
+      )}
+
       {isTouch && !paused && !result && <TouchControls onChange={(t) => gameRef.current?.setTouch(t)} />}
 
       {/* pause menu */}
@@ -339,6 +442,10 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
               <button className="kw-btn cyan" onClick={onRestart}>
                 <span>↻ Restart (R)</span>
               </button>
+              <button className="kw-btn ghost" onClick={() => setHelpOpen(true)}>
+                <span>⌘ Help / Controls</span>
+              </button>
+              {cfg.tutorial && <button className="kw-btn ghost" onClick={skipTutorial}><span>Skip Tutorial</span></button>}
               <button className="kw-btn ghost" onClick={onExit}>
                 <span>⌂ Quit to Menu</span>
               </button>
@@ -363,6 +470,8 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
           </div>
         </div>
       )}
+
+      {helpOpen && <HelpOverlay touch={isTouch} onClose={() => setHelpOpen(false)} />}
 
       {/* results */}
       {result && (

@@ -26,6 +26,7 @@ function weaponIconMat(icon: string): THREE.SpriteMaterial {
     m = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, toneMapped: false });
     iconMats.set(icon, m);
   }
+
   return m;
 }
 import { buildKart, disposeRig, type KartRig } from "./karts";
@@ -34,7 +35,7 @@ import { audio, type SfxName } from "./audio";
 import { newBotState, updateBot, type BotState } from "./ai";
 import {
   BOT_NAMES, KART_PRESETS, TEAM_COLORS, WEAPONS, WEAPON_IDS,
-  type GameCallbacks, type GameConfig, type HudRow, type HudState, type KartPreset, type MatchResult,
+  type GameCallbacks, type GameConfig, type HudRow, type HudState, type KartPreset, type MatchResult, type TutorialState,
   type Mode, type ResultRow, type TouchInput, type WeaponId,
 } from "./types";
 
@@ -60,6 +61,7 @@ export interface Kart {
   turretKick: number;
   /** Human opponent driven by network state (multiplayer). */
   isRemote: boolean;
+  tutorialTarget: boolean;
   remoteId?: string;
   netTarget: NetKartState | null;
   /** seconds spent out of bounds / buried before recovery triggers */
@@ -287,6 +289,22 @@ export class Game {
   private keys = new Set<string>();
   private touch: TouchInput | null = null;
   private tmpV = new THREE.Vector3();
+  private tutorialTarget: Kart | null = null;
+  private tutorialTargetPosition: { x: number; z: number } | null = null;
+  private tutorialDistance = 0;
+  private tutorialStepIndex = 0;
+  private tutorialStepDistance = 0;
+  private tutorialLastPosition: { x: number; z: number } | null = null;
+  private tutorialFireCount = 0;
+  private tutorialStepFireCount = 0;
+  private tutorialPickupCount = 0;
+  private tutorialStepPickupCount = 0;
+  private tutorialTargetHits = 0;
+  private tutorialStepTargetHits = 0;
+  private tutorialSteeredLeft = false;
+  private tutorialSteeredRight = false;
+  private tutorialReversed = false;
+  private tutorialBoosted = false;
 
   // camera
   private camHeading = 0;
@@ -305,6 +323,7 @@ export class Game {
     this.minimap = minimap;
     this.mm = minimap ? minimap.getContext("2d") : null;
     this.mode = cfg.mode;
+    this.tutorialStepIndex = cfg.tutorialStep ?? 0;
     this.timeLeft = cfg.settings.matchMinutes * 60;
     const q = cfg.settings.quality;
     this.level = q === "auto" ? (cfg.touch ? "low" : "high") : q;
@@ -448,6 +467,53 @@ export class Game {
     ordered.forEach((k, i) => {
       this.placeKart(k, spawnOrder[(i + 1) % spawnOrder.length]);
     });
+    if (cfg.tutorial) this.setupTutorialPractice(spawnOrder);
+  }
+
+  private setupTutorialPractice(spawnOrder: number[]) {
+    const p = this.player;
+    const target = this.makeKart({
+      name: "Practice Target",
+      avatar: "◎",
+      preset: KART_PRESETS[0],
+      isPlayer: false,
+      team: -1,
+      skill: 0,
+      enemyGlow: true,
+      tutorialTarget: true,
+    });
+    this.placeKart(target, spawnOrder[1] ?? 0);
+    const x = clamp(p.x + Math.sin(p.heading) * 32, -this.boundX() + 6, this.boundX() - 6);
+    const z = clamp(p.z + Math.cos(p.heading) * 32, -this.boundZ() + 6, this.boundZ() - 6);
+    target.x = x;
+    target.z = z;
+    target.y = this.arena.groundAt(x, z, p.y);
+    target.heading = p.heading + Math.PI;
+    target.vx = 0;
+    target.vz = 0;
+    target.invuln = 0;
+    target.weapon = null;
+    target.ammo = 0;
+    target.rig.group.position.set(x, target.y, z);
+    target.tag.dataset.trainingTarget = "true";
+    this.tutorialTarget = target;
+    this.tutorialTargetPosition = { x, z };
+    this.tutorialLastPosition = { x: p.x, z: p.z };
+
+    const pickups = this.pickups
+      .filter((item) => item.active && item.load !== "health")
+      .sort((a, b) => Math.hypot(a.zone.x - p.x, a.zone.z - p.z) - Math.hypot(b.zone.x - p.x, b.zone.z - p.z));
+    const pickup = pickups[0];
+    for (const other of pickups.slice(1)) {
+      other.active = false;
+      other.mesh.visible = false;
+      other.respawnT = Number.POSITIVE_INFINITY;
+    }
+    if (pickup) this.relocPickup(pickup, pickup.zone, "shield");
+    else {
+      const zone = this.weaponZones[0];
+      if (zone) this.placePickup(zone, "shield");
+    }
   }
 
   private *interleave<T>(a: T[], b: T[]): Generator<T> {
@@ -458,7 +524,7 @@ export class Game {
     }
   }
 
-  private makeKart(o: { name: string; avatar: string; preset: KartPreset; glow?: number; isPlayer: boolean; team: number; skill: number; enemyGlow?: boolean; remoteId?: string }): Kart {
+  private makeKart(o: { name: string; avatar: string; preset: KartPreset; glow?: number; isPlayer: boolean; team: number; skill: number; enemyGlow?: boolean; remoteId?: string; tutorialTarget?: boolean }): Kart {
     const teamColor = o.team >= 0 && this.mode === "team" ? TEAM_COLORS[o.team] : undefined;
     const rig = buildKart(o.preset, {
       primary: teamColor,
@@ -495,10 +561,11 @@ export class Game {
       weapon: null, ammo: 0, cooldown: 0, alive: false, noRespawn: false, respawnT: 0, invuln: 0,
       kills: 0, deaths: 0, score: 0, streak: 0, lastHitBy: -1, lastHitT: -99, lastHitWeapon: "",
       input: { throttle: 0, steer: 0, drift: false, boost: false, fire: false, aimX: 0, aimZ: 0 },
-      ai: o.isPlayer || o.remoteId ? null : newBotState(o.skill),
+      ai: o.isPlayer || o.remoteId || o.tutorialTarget ? null : newBotState(o.skill),
       trailT: 0, mgSide: 1,
       turret: turret.group, turretBarrel: turret.barrel, turretTipMat: turret.tipMat, turretKick: 0,
       isRemote: !!o.remoteId, remoteId: o.remoteId, netTarget: null, recoverT: 0,
+      tutorialTarget: !!o.tutorialTarget,
     };
     this.karts.push(k);
     return k;
@@ -553,6 +620,18 @@ export class Game {
   // ------------------------------------------------------------------ public API
   setTouch(t: TouchInput | null) {
     this.touch = t;
+  }
+  setTutorialStep(step: number) {
+    if (!this.cfg.tutorial || step === this.tutorialStepIndex) return;
+    this.tutorialStepIndex = step;
+    this.tutorialStepDistance = 0;
+    this.tutorialStepFireCount = 0;
+    this.tutorialStepPickupCount = 0;
+    this.tutorialStepTargetHits = 0;
+    this.tutorialSteeredLeft = false;
+    this.tutorialSteeredRight = false;
+    this.tutorialReversed = false;
+    this.tutorialBoosted = false;
   }
   setPaused(p: boolean) {
     this.paused = p;
@@ -667,6 +746,57 @@ export class Game {
   private sampleFire() {
     if (this.touch) return this.touch.fire;
     return this.keys.has("KeyF");
+  }
+
+  private buildTutorialState(): TutorialState {
+    const p = this.player;
+    const target = this.tutorialTarget;
+    const targetDx = target ? target.x - p.x : 0;
+    const targetDz = target ? target.z - p.z : 0;
+    const targetDistance = Math.hypot(targetDx, targetDz);
+    const facingDot = targetDistance > 0
+      ? (targetDx * Math.sin(p.heading) + targetDz * Math.cos(p.heading)) / targetDistance
+      : -1;
+    const pickup = this.pickups
+      .filter((item) => item.active && item.load !== "health")
+      .map((item) => ({ item, distance: Math.hypot(item.zone.x - p.x, item.zone.z - p.z) }))
+      .sort((a, b) => a.distance - b.distance)[0];
+    let pickupBearing: number | null = null;
+    if (pickup) {
+      const dx = pickup.item.zone.x - p.x;
+      const dz = pickup.item.zone.z - p.z;
+      let angle = Math.atan2(dx, dz) - p.heading;
+      while (angle > Math.PI) angle -= Math.PI * 2;
+      while (angle < -Math.PI) angle += Math.PI * 2;
+      pickupBearing = (angle * 180) / Math.PI;
+    }
+    let targetBearing: number | null = null;
+    if (target) {
+      let angle = Math.atan2(targetDx, targetDz) - p.heading;
+      while (angle > Math.PI) angle -= Math.PI * 2;
+      while (angle < -Math.PI) angle += Math.PI * 2;
+      targetBearing = (angle * 180) / Math.PI;
+    }
+    return {
+      throttle: p.input.throttle,
+      steer: p.input.steer,
+      speed: Math.hypot(p.vx, p.vz) * 4,
+      steeredLeft: this.tutorialSteeredLeft,
+      steeredRight: this.tutorialSteeredRight,
+      reversed: this.tutorialReversed,
+      boosting: this.tutorialBoosted,
+      distance: this.tutorialStepDistance,
+      fireCount: this.tutorialStepFireCount,
+      pickupCount: this.tutorialStepPickupCount,
+      targetHits: this.tutorialStepTargetHits,
+      targetInRange: !!target?.alive && targetDistance > 3 && targetDistance <= 75 && facingDot > Math.cos(0.7),
+      targetBearing,
+      weapon: p.weapon,
+      ammo: p.ammo,
+      shield: p.shield,
+      pickupBearing,
+      pickupDistance: pickup?.distance ?? null,
+    };
   }
 
   // Fixed forward firing: weapons always shoot straight out of the front of
@@ -874,8 +1004,29 @@ export class Game {
     for (const k of this.karts) {
       if (k.ai) updateBot(this, k, k.ai, dt, this.phase === "playing");
     }
-    for (const k of this.karts) this.updateKart(k, dt);
+    for (const k of this.karts) {
+      if (!k.tutorialTarget) this.updateKart(k, dt);
+    }
+    if (this.cfg.tutorial && this.tutorialLastPosition) {
+      const travelled = Math.hypot(this.player.x - this.tutorialLastPosition.x, this.player.z - this.tutorialLastPosition.z);
+      this.tutorialDistance += travelled;
+      this.tutorialStepDistance += travelled;
+      this.tutorialLastPosition = { x: this.player.x, z: this.player.z };
+      this.tutorialSteeredLeft ||= this.player.input.steer < -0.2;
+      this.tutorialSteeredRight ||= this.player.input.steer > 0.2;
+      this.tutorialReversed ||= this.player.input.throttle < 0;
+      this.tutorialBoosted ||= this.player.boosting || this.player.boostT > 0;
+    }
     this.kartCollisions();
+    if (this.tutorialTarget) {
+      if (this.tutorialTargetPosition) {
+        this.tutorialTarget.x = this.tutorialTargetPosition.x;
+        this.tutorialTarget.z = this.tutorialTargetPosition.z;
+      }
+      this.tutorialTarget.vx = 0;
+      this.tutorialTarget.vz = 0;
+      this.tutorialTarget.rig.group.position.set(this.tutorialTarget.x, this.tutorialTarget.y, this.tutorialTarget.z);
+    }
     this.updateHazards(dt);
     this.updateRecovery(dt);
     for (const k of this.karts) {
@@ -903,6 +1054,7 @@ export class Game {
     if (this.hudT <= 0) {
       this.hudT = 0.066;
       this.cb.onHud(this.buildHud());
+      if (this.cfg.tutorial) this.cb.onTutorialState?.(this.buildTutorialState());
     }
 
     if (this.endPending > 0) {
@@ -1218,6 +1370,10 @@ export class Game {
       return;
     }
     const def = WEAPONS[k.weapon];
+    if (k.isPlayer && this.cfg.tutorial) {
+      this.tutorialFireCount++;
+      this.tutorialStepFireCount++;
+    }
     // Normalized firing direction from the kart toward its aim point.
     // The kart keeps its own heading: aim and drive are fully independent.
     const aim = kartAim(k);
@@ -1600,6 +1756,13 @@ export class Game {
   }
 
   private hurt(v: Kart, amt: number, atk: Kart | null, weapon: string) {
+    if (v.tutorialTarget) {
+      if (this.cfg.tutorial && atk?.isPlayer && this.phase === "playing") {
+        this.tutorialTargetHits++;
+        this.tutorialStepTargetHits++;
+      }
+      return;
+    }
     if (!v.alive || v.invuln > 0 || this.phase !== "playing") return;
     if (atk && atk !== v && !this.isEnemy(atk, v)) return;
     // A remote human's HP lives on their client: send them the damage instead.
@@ -2067,6 +2230,10 @@ export class Game {
         } else {
           k.weapon = load;
           k.ammo = WEAPONS[load].ammo;
+          if (k.isPlayer && this.cfg.tutorial) {
+            this.tutorialPickupCount++;
+            this.tutorialStepPickupCount++;
+          }
           k.cooldown = Math.min(k.cooldown, 0.2);
           if (k.isPlayer) this.cb.onEvent({ type: "pickup", text: `${WEAPONS[load].icon} ${WEAPONS[load].name.toUpperCase()}`, color: WEAPONS[load].color });
           this.fx.sparks(zn.x, zn.y + 1, zn.z, 18, 0xffffff, 0x35e8ff, 9);
@@ -2083,6 +2250,7 @@ export class Game {
 
   // ------------------------------------------------------------------ modes
   private updateModeLogic(dt: number) {
+    if (this.cfg.tutorial) return;
     if (this.phase !== "playing") return;
     if (this.mode !== "survival") {
       this.timeLeft -= dt;
@@ -2437,6 +2605,7 @@ export class Game {
   private buildHud(): HudState {
     const p = this.player;
     const rows: HudRow[] = this.karts
+      .filter((k) => !k.tutorialTarget)
       .map((k) => ({ name: k.name, avatar: k.avatar, score: Math.round(k.score), kills: k.kills, team: k.team, isPlayer: k.isPlayer }))
       .sort((a, b) => b.score - a.score);
     let top = rows.slice(0, 5);

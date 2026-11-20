@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { audio } from "@/game/audio";
 import { randomMapId, mapDef } from "@/game/maps";
 import { makeRoster } from "@/game/roster";
-import { clearScores, loadProfile, loadScores, loadSettings, saveProfile, saveSettings, type ScoreEntry } from "@/game/storage";
+import { clearScores, getServerTutorialProgressSnapshot, getTutorialProgressSnapshot, loadProfile, loadScores, loadSettings, saveProfile, saveSettings, saveTutorialProgress, subscribeTutorialProgress, type ScoreEntry } from "@/game/storage";
 import { WEAPONS, WEAPON_IDS, type GameConfig, type Mode, type Profile, type RemoteDesc, type RosterEntry, type Settings } from "@/game/types";
 import GameView from "./GameView";
 import KartSelect from "./KartSelect";
@@ -12,16 +12,28 @@ import Lobby from "./Lobby";
 import MapSelect from "./MapSelect";
 import ScoreTable from "./Scores";
 import SettingsPanel from "./SettingsPanel";
+import { HelpOverlay, WelcomeOverlay } from "./Guidance";
 
 type Screen = "menu" | "mode" | "map" | "kart" | "settings" | "lobby" | "scores" | "game";
 
-const MODE_CARDS: { id: Mode; name: string; icon: string; blurb: string; color: string }[] = [
-  { id: "ffa", name: "Free For All", icon: "💥", blurb: "8 drivers, one winner. Most eliminations when the clock hits zero takes the crown.", color: "#ff8a1f" },
-  { id: "team", name: "Team Battle", icon: "🛡️", blurb: "Blue vs Red, 4 on 4. Friendly fire is off — coordinate and out-score the enemy team.", color: "#35e8ff" },
-  { id: "survival", name: "Survival", icon: "☠️", blurb: "Endless waves of tougher AI. You have 3 lives. How many waves can you last?", color: "#ff3fb0" },
+function getTouchModeSnapshot() {
+  return typeof window !== "undefined" && (window.matchMedia("(pointer: coarse)").matches || "ontouchstart" in window);
+}
+function subscribeTouchMode(listener: () => void) {
+  if (typeof window === "undefined") return () => undefined;
+  const media = window.matchMedia("(pointer: coarse)");
+  media.addEventListener("change", listener);
+  return () => media.removeEventListener("change", listener);
+}
+
+const MODE_CARDS: { id: Mode; name: string; icon: string; objective: string; rules: string; color: string }[] = [
+  { id: "ffa", name: "Free For All", icon: "💥", objective: "Defeat opponents, earn eliminations and finish with the highest score.", rules: "Highest score when the match timer reaches zero wins.", color: "#ff8a1f" },
+  { id: "team", name: "Team Battle", icon: "🛡️", objective: "Work with your teammates and eliminate the opposing team.", rules: "Blue vs Red. Friendly fire is off; the higher team score wins.", color: "#35e8ff" },
+  { id: "survival", name: "Survival", icon: "☠️", objective: "Survive increasingly difficult enemy waves while managing your lives.", rules: "You have 3 lives. Survive through wave 5 to win.", color: "#ff3fb0" },
 ];
 
 export default function KartWarsApp() {
+  const tutorialProgress = useSyncExternalStore(subscribeTutorialProgress, getTutorialProgressSnapshot, getServerTutorialProgressSnapshot);
   const [screen, setScreen] = useState<Screen>("menu");
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [profile, setProfile] = useState<Profile>(loadProfile);
@@ -29,6 +41,9 @@ export default function KartWarsApp() {
   const ready = true;
   const [cfg, setCfg] = useState<GameConfig | null>(null);
   const [gameKey, setGameKey] = useState(0);
+  const [menuHelpOpen, setMenuHelpOpen] = useState(false);
+
+  const touch = useSyncExternalStore(subscribeTouchMode, getTouchModeSnapshot, () => false);
 
   useEffect(() => {
     if (ready) saveSettings(settings);
@@ -54,12 +69,13 @@ export default function KartWarsApp() {
       remotes?: RemoteDesc[];
       net?: { code: string; playerId: string };
       seed?: number;
+      tutorial?: boolean;
+      tutorialStep?: number;
     }) => {
       audio.init();
       audio.setVolumes(settings.master, settings.music, settings.sfx);
       const resolved = o.mapId === "random" ? randomMapId() : mapDef(o.mapId).id;
       const seed = o.seed && o.seed > 0 ? o.seed : ((Math.random() * 0xffffffff) >>> 0) || 1;
-      const touch = typeof window !== "undefined" && (window.matchMedia("(pointer: coarse)").matches || "ontouchstart" in window);
       setCfg({
         mode: o.mode,
         mapId: resolved,
@@ -70,12 +86,29 @@ export default function KartWarsApp() {
         remotes: o.remotes ?? [],
         net: o.net,
         touch,
+        tutorial: o.tutorial,
+        tutorialStep: o.tutorialStep,
       });
       setGameKey((k) => k + 1);
       setScreen("game");
     },
-    [profile, settings],
+    [profile, settings, touch],
   );
+
+  const launchTutorial = useCallback((step = 0) => {
+    saveTutorialProgress({ seen: true, completed: false, step });
+    startGame({
+      mode: "ffa",
+      mapId: "neon",
+      roster: [],
+      tutorial: true,
+      tutorialStep: step,
+    });
+  }, [startGame]);
+
+  const skipFirstTutorial = useCallback(() => {
+    saveTutorialProgress({ seen: true, completed: true, step: 0 });
+  }, []);
 
   const onSettings = useCallback((s: Settings) => {
     setSettings(s);
@@ -131,6 +164,14 @@ export default function KartWarsApp() {
                 <span>⚙ Setup</span>
               </button>
             </div>
+            <button className="kw-btn ghost small" onClick={() => setMenuHelpOpen(true)}>
+              <span>ⓘ Help / Controls</span>
+            </button>
+            {tutorialProgress.seen && !tutorialProgress.completed && (
+              <button className="kw-btn cyan small" onClick={() => launchTutorial(tutorialProgress.step)}>
+                <span>▶ Resume Tutorial · Step {Math.min(tutorialProgress.step + 1, 10)}</span>
+              </button>
+            )}
           </div>
           <div className="mt-8 flex max-w-3xl flex-wrap justify-center gap-2">
             {WEAPON_IDS.map((id) => (
@@ -147,9 +188,14 @@ export default function KartWarsApp() {
             <b>{profile.name || "Driver"}</b>
             {best > 0 && <span className="ml-2 text-yellow-300">Best {best.toLocaleString()}</span>}
           </div>
-          <div className="absolute bottom-3 right-3 hidden text-[11px] text-slate-400 sm:block">WASD drive · SPACE drift · SHIFT boost · F fire (shoots forward)</div>
+          <div className="absolute bottom-3 right-3 hidden text-[11px] text-slate-400 sm:block">{touch ? "Touch controls active · Turn your kart to aim · FIRE shoots forward" : "WASD / Arrows drive · SPACE drift · SHIFT boost · F fire (shoots forward)"}</div>
         </div>
       )}
+
+      {screen === "menu" && !tutorialProgress.seen && (
+        <WelcomeOverlay onStart={() => launchTutorial(0)} onSkip={skipFirstTutorial} />
+      )}
+      {menuHelpOpen && screen !== "game" && <HelpOverlay touch={touch} onClose={() => setMenuHelpOpen(false)} />}
 
       {screen === "mode" && (
         <div className="absolute inset-0 z-10 flex flex-col overflow-y-auto p-4 sm:p-8">
@@ -175,7 +221,8 @@ export default function KartWarsApp() {
                 <div className="kw-display mt-3 text-3xl" style={{ color: m.color }}>
                   {m.name}
                 </div>
-                <p className="mt-2 text-sm text-slate-300">{m.blurb}</p>
+                <p className="mt-2 text-sm leading-relaxed text-slate-200">{m.objective}</p>
+                <p className="mt-2 text-xs leading-relaxed text-slate-400">{m.rules}</p>
                 <div className="mt-4 text-xs uppercase tracking-widest text-slate-400">{m.id === "survival" ? "Endless · 3 lives" : `${settings.matchMinutes} minute match`}</div>
                 <div className="kw-display mt-4 inline-block rounded-md bg-white/10 px-4 py-1.5 text-lg group-hover:bg-white/20">Start ▶</div>
               </button>
@@ -192,7 +239,7 @@ export default function KartWarsApp() {
       )}
 
       {screen === "kart" && <KartSelect profile={profile} onChange={setProfile} onBack={() => go("menu")} />}
-      {screen === "settings" && <SettingsPanel settings={settings} onChange={onSettings} onBack={() => go("menu")} />}
+      {screen === "settings" && <SettingsPanel settings={settings} touch={touch} onReplayTutorial={() => launchTutorial(0)} onChange={onSettings} onBack={() => go("menu")} />}
       {screen === "lobby" && <Lobby profile={profile} onStart={startGame} onBack={() => go("menu")} />}
 
       {screen === "scores" && (

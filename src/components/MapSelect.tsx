@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import { MAPS } from "@/game/maps";
 
 const DIFF_COLOR: Record<string, string> = {
@@ -59,14 +60,8 @@ export default function MapSelect({
             }`}
             style={sel === m.id ? { boxShadow: "0 0 30px rgba(53,232,255,0.45)" } : undefined}
           >
-            <div className="relative h-40 overflow-hidden bg-black">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={m.image}
-                alt={m.name}
-                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                draggable={false}
-              />
+            <div className="relative h-40 overflow-hidden bg-black transition-transform duration-300 group-hover:scale-[1.02]">
+              <Image src={m.image} alt={`${m.name} map preview`} fill sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw" className="object-cover" />
               {sel === m.id && (
                 <div className="kw-display absolute right-2 top-2 rounded-full bg-cyan-300 px-3 py-0.5 text-sm text-black">
                   ✓ SELECTED
