@@ -2246,6 +2246,7 @@ export class Game {
 
   /** Render a short snapshot buffer behind server time and briefly extrapolate gaps. */
   private updateRemote(k: Kart, dt: number) {
+    k.invuln = Math.max(0, k.invuln - dt);
     const samples = k.netSamples;
     if (!samples.length) return;
     const targetTime = (this.net?.serverNow() ?? Date.now()) - 120;
@@ -2625,7 +2626,9 @@ export class Game {
       (r.shield.material as THREE.MeshBasicMaterial).opacity = (0.22 + Math.sin(this.time * 6) * 0.05) * blink;
       r.shield.scale.setScalar(1 + Math.sin(this.time * 8) * 0.03);
     }
-    r.group.visible = k.invuln > 0 && k.invuln < 2.5 && !sh ? Math.sin(this.time * 40) > -0.3 : true;
+    r.group.visible = !k.isRemote && k.invuln > 0 && k.invuln < 2.5 && !sh
+      ? Math.sin(this.time * 40) > -0.3
+      : true;
     r.ringMat.opacity = 0.55 + (k.boosting ? 0.35 : 0) + Math.sin(this.time * 4 + k.id) * 0.08;
   }
 
