@@ -8,11 +8,13 @@ import { buildKart, disposeRig, type KartRig } from "./karts";
 import { Effects } from "./effects";
 import { audio, type SfxName } from "./audio";
 import { newBotState, updateBot, type BotState } from "./ai";
+import { MAP_ID } from "./spawns";
 import {
   BOT_NAMES, KART_PRESETS, TEAM_COLORS, WEAPONS, WEAPON_IDS,
   type GameCallbacks, type GameConfig, type HudRow, type HudState, type KartPreset, type MatchResult,
   type Mode, type ResultRow, type TouchInput, type WeaponId,
 } from "./types";
+import type { NetworkPlayer, PlayerSnapshot, SnapshotFrame } from "./networkTypes";
 
 export interface Input {
   throttle: number;
@@ -26,6 +28,10 @@ export interface Input {
 
 export interface Kart {
   id: number;
+  networkId: string | null;
+  isRemote: boolean;
+  remoteSamples: (PlayerSnapshot & { serverTime: number })[];
+  lastRemoteSequence: number;
   name: string;
   avatar: string;
   isPlayer: boolean;
@@ -210,6 +216,9 @@ export class Game {
   phase: "intro" | "playing" | "ended" = "intro";
   private introT = INTRO_TIME;
   private lastCount = 99;
+  private networkSendT = 0;
+  private unsubscribeSnapshots: (() => void) | null = null;
+  private unsubscribePlayers: (() => void) | null = null;
   private goT = 0;
   private timeLeft: number;
   private elapsed = 0;
@@ -258,6 +267,11 @@ export class Game {
     this.mm = minimap ? minimap.getContext("2d") : null;
     this.mode = cfg.mode;
     this.timeLeft = cfg.settings.matchMinutes * 60;
+    if (cfg.network) {
+      const elapsed = Math.max(0, (cfg.network.serverNow() - cfg.network.startAt) / 1000);
+      this.timeLeft = Math.max(0, this.timeLeft - elapsed);
+      this.introT = Math.max(0, (cfg.network.startAt - cfg.network.serverNow()) / 1000);
+    }
     const q = cfg.settings.quality;
     this.level = q === "auto" ? (cfg.touch ? "low" : "high") : q;
 
@@ -329,6 +343,10 @@ export class Game {
     this.scene.add(this.aimLine);
 
     this.setupKarts();
+    if (cfg.network) {
+      this.unsubscribeSnapshots = cfg.network.onSnapshots((frame) => this.receiveSnapshots(frame));
+      this.unsubscribePlayers = cfg.network.onPlayersChange((players) => this.syncNetworkPlayers(players));
+    }
     this.applyQuality(this.level);
     this.resize();
 
@@ -352,6 +370,29 @@ export class Game {
   // ------------------------------------------------------------------ setup
   private setupKarts() {
     const cfg = this.cfg;
+    if (cfg.network) {
+      if (cfg.network.mapId !== MAP_ID) throw new Error(`Unsupported multiplayer map: ${cfg.network.mapId}`);
+      const roster = cfg.network.players.slice().sort((a, b) => a.slot - b.slot);
+      const own = roster.find((player) => player.playerId === cfg.network!.playerId);
+      if (!own) throw new Error("The room did not assign this client a player slot.");
+      const player = this.makeKart({
+        name: own.displayName,
+        avatar: own.avatar,
+        preset: KART_PRESETS[own.kartId] ?? KART_PRESETS[0],
+        isPlayer: true,
+        team: own.team,
+        skill: 1,
+      });
+      this.player = player;
+      this.placeKart(player, own.slot);
+      if (cfg.network.initialSnapshot) this.applyNetworkSnapshot(player, cfg.network.initialSnapshot);
+      player.invuln = 0;
+      for (const entry of roster) {
+        if (entry.playerId !== own.playerId) this.addNetworkKart(entry);
+      }
+      return;
+    }
+
     const roster = cfg.roster.slice(0, 7);
     const mode = cfg.mode;
     const spawnOrder = [...this.arena.spawns.keys()].sort(() => Math.random() - 0.5);
@@ -372,7 +413,7 @@ export class Game {
     });
   }
 
-  private makeKart(o: { name: string; avatar: string; preset: KartPreset; glow?: number; isPlayer: boolean; team: number; skill: number; enemyGlow?: boolean }): Kart {
+  private makeKart(o: { name: string; avatar: string; preset: KartPreset; glow?: number; isPlayer: boolean; team: number; skill: number; enemyGlow?: boolean; networkId?: string; isRemote?: boolean }): Kart {
     const teamColor = o.team >= 0 && this.mode === "team" ? TEAM_COLORS[o.team] : undefined;
     const rig = buildKart(o.preset, {
       primary: teamColor,
@@ -398,10 +439,11 @@ export class Game {
     tag.append(nm, bar);
     if (o.team >= 0 && this.mode === "team") tag.dataset.team = String(o.team);
     else if (!o.isPlayer) tag.dataset.team = "enemy";
-    if (o.isPlayer) tag.style.display = "none";
+    if (o.isPlayer && !this.cfg.network) tag.style.display = "none";
     this.overlay.appendChild(tag);
     const k: Kart = {
-      id: this.nextId++, name: o.name, avatar: o.avatar, isPlayer: o.isPlayer, team: o.team, preset: o.preset, rig, tag, tagBar: fill,
+      id: this.nextId++, networkId: o.networkId ?? null, isRemote: o.isRemote ?? false, remoteSamples: [], lastRemoteSequence: -1,
+      name: o.name, avatar: o.avatar, isPlayer: o.isPlayer, team: o.team, preset: o.preset, rig, tag, tagBar: fill,
       x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, heading: 0, grounded: true, slopeVy: 0, steerCur: 0, pitch: 0, roll: 0,
       speedF: o.isPlayer ? 1 : 0.78 + o.skill * 0.12,
       stats: { speed: o.preset.speed, handling: o.preset.handling, armor: o.preset.armor },
@@ -409,12 +451,132 @@ export class Game {
       weapon: null, ammo: 0, cooldown: 0, alive: false, noRespawn: false, respawnT: 0, invuln: 0,
       kills: 0, deaths: 0, score: 0, streak: 0, lastHitBy: -1, lastHitT: -99, lastHitWeapon: "",
       input: { throttle: 0, steer: 0, drift: false, boost: false, fire: false, aimX: 0, aimZ: 0 },
-      ai: o.isPlayer ? null : newBotState(o.skill),
+      ai: o.isPlayer || o.isRemote ? null : newBotState(o.skill),
       trailT: 0, mgSide: 1,
       turret: turret.group, turretBarrel: turret.barrel, turretTipMat: turret.tipMat, turretKick: 0,
     };
     this.karts.push(k);
     return k;
+  }
+
+  private addNetworkKart(player: NetworkPlayer) {
+    if (this.karts.some((kart) => kart.networkId === player.playerId)) return;
+    const kart = this.makeKart({
+      name: player.displayName,
+      avatar: player.avatar,
+      preset: KART_PRESETS[player.kartId] ?? KART_PRESETS[0],
+      isPlayer: false,
+      isRemote: true,
+      networkId: player.playerId,
+      team: player.team,
+      skill: 0.5,
+    });
+    this.placeKart(kart, player.slot);
+    kart.invuln = 0;
+  }
+
+  private syncNetworkPlayers(players: NetworkPlayer[]) {
+    const network = this.cfg.network;
+    if (!network) return;
+    const ids = new Set(players.map((player) => player.playerId));
+    for (const player of players) {
+      if (player.playerId !== network.playerId) this.addNetworkKart(player);
+    }
+    for (const kart of [...this.karts]) {
+      if (!kart.isRemote || !kart.networkId || ids.has(kart.networkId)) continue;
+      this.karts.splice(this.karts.indexOf(kart), 1);
+      disposeRig(kart.rig);
+      kart.turretTipMat.dispose();
+      kart.tag.remove();
+    }
+  }
+
+  private receiveSnapshots(frame: SnapshotFrame) {
+    for (const snapshot of frame.players) {
+      const kart = this.karts.find((candidate) => candidate.isRemote && candidate.networkId === snapshot.playerId);
+      if (!kart || snapshot.sequence <= kart.lastRemoteSequence) continue;
+      kart.lastRemoteSequence = snapshot.sequence;
+      kart.remoteSamples.push({ ...snapshot, serverTime: frame.serverTime });
+      kart.remoteSamples.sort((a, b) => a.serverTime - b.serverTime);
+      if (kart.remoteSamples.length > 24) kart.remoteSamples.splice(0, kart.remoteSamples.length - 24);
+    }
+  }
+
+  private updateRemoteKart(kart: Kart) {
+    const network = this.cfg.network;
+    if (!network || kart.remoteSamples.length === 0) return;
+    const samples = kart.remoteSamples;
+    const renderTime = network.serverNow() - 100;
+    while (samples.length > 2 && samples[1].serverTime <= renderTime) samples.shift();
+
+    const first = samples[0];
+    const next = samples.find((sample) => sample.serverTime >= renderTime);
+    let x = first.x;
+    let y = first.y;
+    let z = first.z;
+    let vx = first.vx;
+    let vy = first.vy;
+    let vz = first.vz;
+    let heading = first.heading;
+    let pitch = first.pitch;
+    let roll = first.roll;
+    let state = first;
+    if (next && next !== first) {
+      const previous = samples[samples.indexOf(next) - 1] ?? first;
+      const t = Math.max(0, Math.min(1, (renderTime - previous.serverTime) / Math.max(1, next.serverTime - previous.serverTime)));
+      x = previous.x + (next.x - previous.x) * t;
+      y = previous.y + (next.y - previous.y) * t;
+      z = previous.z + (next.z - previous.z) * t;
+      vx = previous.vx + (next.vx - previous.vx) * t;
+      vy = previous.vy + (next.vy - previous.vy) * t;
+      vz = previous.vz + (next.vz - previous.vz) * t;
+      heading = lerpAngle(previous.heading, next.heading, t);
+      pitch = previous.pitch + (next.pitch - previous.pitch) * t;
+      roll = previous.roll + (next.roll - previous.roll) * t;
+      state = t < 0.5 ? previous : next;
+    } else if (renderTime > first.serverTime) {
+      const extrapolation = Math.min(0.2, (renderTime - first.serverTime) / 1000);
+      x += vx * extrapolation;
+      y += vy * extrapolation;
+      z += vz * extrapolation;
+    }
+
+    this.applyNetworkSnapshot(kart, {
+      ...state,
+      x,
+      y,
+      z,
+      vx,
+      vy,
+      vz,
+      heading,
+      pitch,
+      roll,
+    });
+  }
+
+  private applyNetworkSnapshot(kart: Kart, snapshot: PlayerSnapshot) {
+    kart.x = snapshot.x;
+    kart.y = snapshot.y;
+    kart.z = snapshot.z;
+    kart.vx = snapshot.vx;
+    kart.vy = snapshot.vy;
+    kart.vz = snapshot.vz;
+    kart.heading = snapshot.heading;
+    kart.pitch = snapshot.pitch;
+    kart.roll = snapshot.roll;
+    kart.grounded = snapshot.grounded;
+    kart.boosting = snapshot.boosting;
+    kart.drifting = snapshot.drifting;
+    kart.driftLevel = snapshot.driftLevel;
+    kart.alive = snapshot.alive;
+    kart.hp = snapshot.hp;
+    kart.weapon = WEAPON_IDS.find((weapon) => weapon === snapshot.weapon) ?? null;
+    kart.ammo = snapshot.ammo;
+    kart.input.aimX = snapshot.aimX;
+    kart.input.aimZ = snapshot.aimZ;
+    kart.input.fire = snapshot.firing;
+    kart.rig.group.visible = snapshot.alive;
   }
 
   private placeKart(k: Kart, spawnIdx: number, sound = false) {
@@ -493,6 +655,8 @@ export class Game {
     window.removeEventListener("keyup", this.onKeyUp);
     window.removeEventListener("blur", this.onBlur);
     window.removeEventListener("contextmenu", this.onContext);
+    this.unsubscribeSnapshots?.();
+    this.unsubscribePlayers?.();
     audio.stopEngine();
     audio.stopMusic();
     audio.resume();
@@ -739,9 +903,12 @@ export class Game {
   private step(dt: number) {
     this.time += dt;
     this.arena.update(this.time, dt);
+    for (const k of this.karts) if (k.isRemote) this.updateRemoteKart(k);
 
     if (this.phase === "intro") {
-      this.introT -= dt;
+      this.introT = this.cfg.network
+        ? Math.max(0, (this.cfg.network.startAt - this.cfg.network.serverNow()) / 1000)
+        : this.introT - dt;
       const c = Math.ceil(this.introT);
       if (c !== this.lastCount && c > 0) {
         this.lastCount = c;
@@ -762,7 +929,7 @@ export class Game {
     for (const k of this.karts) {
       if (k.ai) updateBot(this, k, k.ai, dt, this.phase === "playing");
     }
-    for (const k of this.karts) this.updateKart(k, dt);
+    for (const k of this.karts) if (!k.isRemote) this.updateKart(k, dt);
     this.kartCollisions();
     for (const k of this.karts) {
       if (!k.alive) continue;
@@ -789,6 +956,7 @@ export class Game {
       this.hudT = 0.066;
       this.cb.onHud(this.buildHud());
     }
+    this.publishPlayerSnapshot(dt);
 
     if (this.endPending > 0) {
       this.endPending -= dt;
@@ -801,6 +969,37 @@ export class Game {
         this.cb.onEnd(this.result);
       }
     }
+  }
+
+  private publishPlayerSnapshot(dt: number) {
+    const network = this.cfg.network;
+    if (!network || this.phase !== "playing") return;
+    this.networkSendT -= dt;
+    if (this.networkSendT > 0) return;
+    this.networkSendT = 0.05;
+    const player = this.player;
+    network.sendSnapshot({
+      x: player.x,
+      y: player.y,
+      z: player.z,
+      vx: player.vx,
+      vy: player.vy,
+      vz: player.vz,
+      heading: player.heading,
+      pitch: player.pitch,
+      roll: player.roll,
+      boosting: player.boosting,
+      drifting: player.drifting,
+      driftLevel: player.driftLevel,
+      grounded: player.grounded,
+      alive: player.alive,
+      hp: player.hp,
+      weapon: player.weapon,
+      ammo: player.ammo,
+      firing: player.input.fire,
+      aimX: player.input.aimX,
+      aimZ: player.input.aimZ,
+    });
   }
 
   // ------------------------------------------------------------------ kart physics
@@ -1046,10 +1245,10 @@ export class Game {
     const ks = this.karts;
     for (let i = 0; i < ks.length; i++) {
       const a = ks[i];
-      if (!a.alive) continue;
+      if (!a.alive || a.isRemote) continue;
       for (let j = i + 1; j < ks.length; j++) {
         const b = ks[j];
-        if (!b.alive || Math.abs(a.y - b.y) > 1.6) continue;
+        if (!b.alive || b.isRemote || Math.abs(a.y - b.y) > 1.6) continue;
         const dx = a.x - b.x;
         const dz = a.z - b.z;
         const rr = KART_R * 2;
@@ -1581,7 +1780,7 @@ export class Game {
 
   private updateRespawns(dt: number) {
     for (const k of this.karts) {
-      if (k.alive || k.noRespawn || this.phase === "ended") continue;
+      if (k.isRemote || k.alive || k.noRespawn || this.phase === "ended") continue;
       k.respawnT -= dt;
       if (k.respawnT <= 0) {
         this.placeKart(k, this.pickSpawn(k), true);
@@ -1646,7 +1845,12 @@ export class Game {
   private updateModeLogic(dt: number) {
     if (this.phase !== "playing") return;
     if (this.mode !== "survival") {
-      this.timeLeft -= dt;
+      if (this.cfg.network) {
+        const elapsed = Math.max(0, (this.cfg.network.serverNow() - this.cfg.network.startAt) / 1000);
+        this.timeLeft = Math.max(0, this.cfg.settings.matchMinutes * 60 - elapsed);
+      } else {
+        this.timeLeft -= dt;
+      }
       if (this.timeLeft <= 0) {
         this.timeLeft = 0;
         this.cb.onEvent({ type: "banner", text: "TIME!", color: "#ffd21f" });
@@ -1714,15 +1918,26 @@ export class Game {
       ...this.karts.map((k) => ({ name: k.name, avatar: k.avatar, kills: k.kills, deaths: k.deaths, score: Math.round(k.score), team: k.team, isPlayer: k.isPlayer })),
       ...this.retired,
     ];
-    rows.sort((a, b) => b.score - a.score || b.kills - a.kills);
+    rows.sort((a, b) => b.score - a.score
+      || b.kills - a.kills
+      || a.deaths - b.deaths
+      || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     const p = this.player;
-    const rank = rows.findIndex((r) => r.isPlayer) + 1;
+    const rank = 1 + rows.filter((row) => row.score > Math.round(p.score)
+      || (row.score === Math.round(p.score) && row.kills > p.kills)
+      || (row.score === Math.round(p.score) && row.kills === p.kills && row.deaths < p.deaths)).length;
+    const first = rows[0];
+    const draw = this.mode === "ffa"
+      ? rank === 1 && rows.filter((row) => row.score === first?.score
+        && row.kills === first?.kills
+        && row.deaths === first?.deaths).length > 1
+      : this.mode === "team" && this.teamScores[0] === this.teamScores[1];
     let win = false;
-    if (this.mode === "ffa") win = rank === 1;
+    if (this.mode === "ffa") win = rank === 1 && !draw;
     else if (this.mode === "team") win = this.teamScores[p.team as 0 | 1] > this.teamScores[(1 - p.team) as 0 | 1];
     else win = this.wave >= 5;
     this.result = {
-      mode: this.mode, rows, score: Math.round(p.score), kills: p.kills, deaths: p.deaths, win, rank, teamScores: [...this.teamScores] as [number, number],
+      mode: this.mode, rows, score: Math.round(p.score), kills: p.kills, deaths: p.deaths, win, draw, rank, teamScores: [...this.teamScores] as [number, number],
       wave: this.wave, duration: this.elapsed, playerTeam: p.team,
     };
     for (const k of this.karts) {
@@ -1864,7 +2079,7 @@ export class Game {
   private updateTags() {
     const p = this.player;
     for (const k of this.karts) {
-      if (k.isPlayer || !k.alive) continue;
+      if ((k.isPlayer && !this.cfg.network) || !k.alive) continue;
       const d = Math.hypot(k.x - p.x, k.z - p.z);
       const pr = this.project(k.x, k.y + 2.8, k.z);
       if (!pr.vis || d > 75) {

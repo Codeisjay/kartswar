@@ -2,163 +2,113 @@
 
 import { useEffect, useRef, useState } from "react";
 import { audio } from "@/game/audio";
-import { makeRoster, modeFromCode, randomCode } from "@/game/roster";
-import { TEAM_COLORS, type Mode, type Profile, type RosterEntry } from "@/game/types";
+import { createRoom, joinQuickMatch, joinRoom, type MultiplayerSession } from "@/game/multiplayerClient";
+import { TEAM_COLORS, type Profile } from "@/game/types";
+import type { LobbyState, NetworkPlayer } from "@/game/networkTypes";
 
-interface Seat {
-  name: string;
-  avatar: string;
-  ai: boolean;
-  you: boolean;
-  host: boolean;
-  ready: boolean;
-  entry?: RosterEntry;
-}
-
-const MODES: { id: Mode; label: string; icon: string }[] = [
+const MODES: { id: "ffa" | "team"; label: string; icon: string }[] = [
   { id: "ffa", label: "Free For All", icon: "💥" },
   { id: "team", label: "Team Battle", icon: "🛡️" },
 ];
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
-export default function Lobby({ profile, onStart, onBack }: { profile: Profile; onStart: (mode: Mode, roster: RosterEntry[]) => void; onBack: () => void }) {
+interface Props {
+  profile: Profile;
+  onSession: (session: MultiplayerSession | null) => void;
+  onBack: () => void;
+}
+
+export default function Lobby({ profile, onSession, onBack }: Props) {
   const [tab, setTab] = useState<"quick" | "create" | "join">("quick");
-  const [mode, setMode] = useState<Mode>("ffa");
-  const [seats, setSeats] = useState<Seat[]>([]);
-  const [code, setCode] = useState("");
+  const [mode, setMode] = useState<"ffa" | "team">("ffa");
+  const [lobby, setLobby] = useState<LobbyState | null>(null);
   const [joinCode, setJoinCode] = useState("");
-  const [status, setStatus] = useState<"idle" | "searching" | "found" | "room">("idle");
-  const [countdown, setCountdown] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  const timer = useRef<number | null>(null);
+  const [pending, setPending] = useState(false);
+  const [now, setNow] = useState(0);
+  const [ownPlayerId, setOwnPlayerId] = useState("");
+  const sessionRef = useRef<MultiplayerSession | null>(null);
+  const unsubscribeRef = useRef<(() => void)[]>([]);
 
-  const you: Seat = { name: profile.name || "Driver", avatar: profile.avatar, ai: false, you: true, host: false, ready: true };
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 100);
+    return () => {
+      window.clearInterval(timer);
+      unsubscribeRef.current.forEach((unsubscribe) => unsubscribe());
+    };
+  }, []);
 
-  const clear = () => {
-    if (timer.current) {
-      clearInterval(timer.current);
-      clearTimeout(timer.current);
-      timer.current = null;
-    }
+  const attach = async (session: MultiplayerSession) => {
+    sessionRef.current = session;
+    onSession(session);
+    unsubscribeRef.current.forEach((unsubscribe) => unsubscribe());
+    unsubscribeRef.current = [session.onLobbyState(setLobby), session.onRoomError(setError)];
+    const state = await session.initialize();
+    setOwnPlayerId(session.ownPlayerId);
+    setLobby(state);
+    setPending(false);
   };
-  useEffect(() => clear, []);
 
-  const reset = () => {
-    clear();
-    setSeats([]);
-    setStatus("idle");
-    setCountdown(null);
-    setCode("");
+  const connect = async (action: () => Promise<MultiplayerSession>) => {
+    setPending(true);
     setError("");
-  };
-
-  const launch = (m: Mode, list: Seat[]) => {
-    const roster = list.filter((s) => !s.you).map((s) => s.entry as RosterEntry);
-    onStart(m, roster);
-  };
-
-  const startCountdown = (m: Mode, list: Seat[]) => {
-    clear();
-    let c = 3;
-    setCountdown(c);
-    audio.sfx("beep");
-    timer.current = window.setInterval(() => {
-      c--;
-      if (c <= 0) {
-        clear();
-        launch(m, list);
-      } else {
-        setCountdown(c);
-        audio.sfx("beep");
+    try {
+      audio.init();
+      const session = await action();
+      try {
+        await attach(session);
+      } catch (reason) {
+        await session.leave();
+        throw reason;
       }
-    }, 900);
-  };
-
-  // ---- quick match
-  const findMatch = () => {
-    audio.init();
-    reset();
-    setStatus("searching");
-    const target = 6 + Math.floor(Math.random() * 3);
-    const pool = makeRoster(7);
-    let list: Seat[] = [{ ...you, ready: true }];
-    setSeats(list);
-    timer.current = window.setInterval(() => {
-      if (list.length >= target) {
-        clear();
-        setStatus("found");
-        audio.sfx("pickup");
-        window.setTimeout(() => startCountdown(mode, list), 600);
-        return;
-      }
-      const e = pool[list.length - 1];
-      list = [...list, { name: e.name, avatar: e.avatar, ai: true, you: false, host: false, ready: true, entry: e }];
-      setSeats(list);
-      audio.sfx("click");
-    }, 650);
-  };
-
-  // ---- private room
-  const createRoom = () => {
-    reset();
-    setCode(randomCode());
-    setSeats([{ ...you, host: true }]);
-    setStatus("room");
-  };
-  const addAi = () => {
-    setSeats((cur) => {
-      if (cur.length >= 8) return cur;
-      const pool = makeRoster(8, undefined, cur.map((s) => s.name));
-      const e = pool[0];
-      return [...cur, { name: e.name, avatar: e.avatar, ai: true, you: false, host: false, ready: true, entry: e }];
-    });
-    audio.sfx("click");
-  };
-  const fillAi = () => {
-    setSeats((cur) => {
-      const need = 8 - cur.length;
-      const pool = makeRoster(need, undefined, cur.map((s) => s.name));
-      return [...cur, ...pool.map((e) => ({ name: e.name, avatar: e.avatar, ai: true, you: false, host: false, ready: true, entry: e }))];
-    });
-  };
-  const kick = (i: number) => setSeats((cur) => cur.filter((_, idx) => idx !== i));
-
-  // ---- join room
-  const joinRoom = () => {
-    const c = joinCode.trim().toUpperCase();
-    if (!/^[A-Z0-9]{5}$/.test(c)) {
-      setError("Room codes are 5 letters/numbers.");
-      return;
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : "Could not connect to the multiplayer server.";
+      setError(message);
+      setPending(false);
     }
-    reset();
-    const m = modeFromCode(c);
-    const n = 3 + (c.charCodeAt(0) % 4);
-    const roster = makeRoster(n, c);
-    setMode(m);
-    setCode(c);
-    setSeats([
-      { name: roster[0].name, avatar: roster[0].avatar, ai: true, you: false, host: true, ready: true, entry: roster[0] },
-      { ...you, ready: false },
-      ...roster.slice(1).map((e) => ({ name: e.name, avatar: e.avatar, ai: true, you: false, host: false, ready: true, entry: e })),
-    ]);
-    setStatus("room");
-    audio.sfx("pickup");
+  };
+
+  const leaveRoom = async () => {
+    const session = sessionRef.current;
+    sessionRef.current = null;
+    setOwnPlayerId("");
+    unsubscribeRef.current.forEach((unsubscribe) => unsubscribe());
+    unsubscribeRef.current = [];
+    setLobby(null);
+    onSession(null);
+    if (session) await session.leave();
+  };
+
+  const changeTab = async (next: "quick" | "create" | "join") => {
+    await leaveRoom();
+    setTab(next);
+    setError("");
+    setPending(false);
   };
 
   const copy = async () => {
+    if (!lobby) return;
     try {
-      await navigator.clipboard.writeText(code);
+      await navigator.clipboard.writeText(lobby.code);
       setCopied(true);
       setTimeout(() => setCopied(false), 1200);
-    } catch {
-      /* clipboard unavailable */
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Clipboard access is unavailable.");
     }
   };
 
-  const slots = Array.from({ length: 8 }, (_, i) => seats[i] ?? null);
-  const isHost = tab === "create";
-  const youSeat = seats.find((s) => s.you);
+  const connectedPlayers = lobby?.players.filter((player) => player.connected) ?? [];
+  const self = lobby?.players.find((player) => player.playerId === ownPlayerId);
+  const isHost = !!self?.host;
+  const allReady = connectedPlayers.length >= 2 && connectedPlayers.every((player) => player.ready);
+  const statusLabel = lobby?.phase === "countdown" ? "Match starting…" : lobby?.phase === "playing" ? "Match in progress" : lobby?.phase === "ended" ? "Match ended" : "Lobby";
+  const countdown = lobby?.phase === "countdown" && lobby.startAt ? Math.max(0, Math.ceil((lobby.startAt - now) / 1000)) : null;
+
+  const slots: (NetworkPlayer | null)[] = Array.from({ length: 8 }, (_, i) => lobby?.players.find((player) => player.slot === i) ?? null);
+  const isRoom = !!lobby;
+  const canReady = !!lobby && lobby.phase === "lobby" && !!self && !self.host;
+  const canStart = !!lobby && lobby.phase === "lobby" && isHost && allReady;
 
   return (
     <div className="absolute inset-0 z-10 flex flex-col overflow-y-auto p-4 sm:p-8">
@@ -166,8 +116,8 @@ export default function Lobby({ profile, onStart, onBack }: { profile: Profile; 
         <h2 className="kw-display kw-title text-5xl">Multiplayer</h2>
         <button
           className="kw-btn ghost small"
-          onClick={() => {
-            clear();
+          onClick={async () => {
+            await leaveRoom();
             onBack();
           }}
         >
@@ -175,23 +125,21 @@ export default function Lobby({ profile, onStart, onBack }: { profile: Profile; 
         </button>
       </div>
 
-      <div className="mx-auto mt-3 w-full max-w-5xl rounded-lg border border-yellow-300/30 bg-yellow-300/10 px-3 py-2 text-xs text-yellow-100">
-        ⚠ Online servers aren&apos;t connected in this build — rooms and matchmaking run offline and empty seats are filled by AI drivers. The game core separates input from simulation so a network transport can plug in later.
+      <div className="mx-auto mt-3 w-full max-w-5xl rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
+        Rooms use the authoritative KARTSWAR multiplayer server. Players connect over WebSockets; no AI drivers are added to network rooms.
       </div>
 
       <div className="mx-auto mt-4 grid w-full max-w-5xl gap-5 lg:grid-cols-[320px_1fr]">
         <div className="kw-panel space-y-4 p-4">
           <div className="grid grid-cols-3 gap-1.5">
-            {(["quick", "create", "join"] as const).map((t) => (
+            {(["quick", "create", "join"] as const).map((nextTab) => (
               <button
-                key={t}
-                className={`kw-chip py-2 text-xs font-bold uppercase tracking-wider ${tab === t ? "active" : ""}`}
-                onClick={() => {
-                  setTab(t);
-                  reset();
-                }}
+                key={nextTab}
+                className={`kw-chip py-2 text-xs font-bold uppercase tracking-wider ${tab === nextTab ? "active" : ""}`}
+                disabled={pending}
+                onClick={() => void changeTab(nextTab)}
               >
-                {t === "quick" ? "Quick Match" : t === "create" ? "Create Room" : "Join Room"}
+                {nextTab === "quick" ? "Quick Match" : nextTab === "create" ? "Create Room" : "Join Room"}
               </button>
             ))}
           </div>
@@ -200,10 +148,15 @@ export default function Lobby({ profile, onStart, onBack }: { profile: Profile; 
             <div>
               <div className="mb-1 text-xs uppercase tracking-widest text-slate-400">Game mode</div>
               <div className="grid grid-cols-2 gap-2">
-                {MODES.map((m) => (
-                  <button key={m.id} disabled={status === "searching" || status === "found"} className={`kw-chip px-2 py-2 text-sm font-bold ${mode === m.id ? "active" : ""}`} onClick={() => setMode(m.id)}>
-                    <div className="text-xl">{m.icon}</div>
-                    {m.label}
+                {MODES.map((option) => (
+                  <button
+                    key={option.id}
+                    disabled={isRoom || pending}
+                    className={`kw-chip px-2 py-2 text-sm font-bold ${mode === option.id ? "active" : ""}`}
+                    onClick={() => setMode(option.id)}
+                  >
+                    <div className="text-xl">{option.icon}</div>
+                    {option.label}
                   </button>
                 ))}
               </div>
@@ -212,14 +165,25 @@ export default function Lobby({ profile, onStart, onBack }: { profile: Profile; 
 
           {tab === "quick" && (
             <div className="space-y-2">
-              <p className="text-sm text-slate-300">Jump into the next available arena. We&apos;ll gather up to 8 drivers.</p>
-              {status === "searching" || status === "found" ? (
-                <button className="kw-btn ghost w-full" onClick={reset}>
-                  <span>✕ Cancel</span>
-                </button>
+              <p className="text-sm text-slate-300">Join or create an online room for up to 8 real players.</p>
+              {isRoom ? (
+                <>
+                  {isHost ? (
+                    <button className="kw-btn w-full" disabled={!canStart} onClick={() => sessionRef.current?.requestStart()}>
+                      <span>▶ Start Match</span>
+                    </button>
+                  ) : (
+                    <button className="kw-btn w-full" disabled={!canReady} onClick={() => sessionRef.current?.setReady(!self?.ready)}>
+                      <span>{self?.ready ? "✔ Ready" : "✔ Ready Up"}</span>
+                    </button>
+                  )}
+                  <button className="kw-btn ghost w-full" onClick={() => void leaveRoom()}>
+                    <span>✕ Leave Room</span>
+                  </button>
+                </>
               ) : (
-                <button className="kw-btn w-full" onClick={findMatch}>
-                  <span>🔍 Find Match</span>
+                <button className="kw-btn w-full" disabled={pending} onClick={() => void connect(() => joinQuickMatch(profile, mode))}>
+                  <span>{pending ? "Connecting…" : "🔍 Find Match"}</span>
                 </button>
               )}
             </div>
@@ -227,25 +191,23 @@ export default function Lobby({ profile, onStart, onBack }: { profile: Profile; 
 
           {tab === "create" && (
             <div className="space-y-2">
-              {status !== "room" ? (
-                <button className="kw-btn cyan w-full" onClick={createRoom}>
-                  <span>＋ Create Private Room</span>
+              {!isRoom ? (
+                <button className="kw-btn cyan w-full" disabled={pending} onClick={() => void connect(() => createRoom(profile, mode))}>
+                  <span>{pending ? "Creating…" : "＋ Create Private Room"}</span>
                 </button>
               ) : (
                 <>
                   <div className="rounded-xl border border-cyan-300/40 bg-black/40 p-3 text-center">
                     <div className="text-[11px] uppercase tracking-widest text-slate-400">Join code</div>
-                    <div className="kw-display text-5xl tracking-[0.2em] text-cyan-300">{code}</div>
-                    <button className="kw-chip mt-1 px-3 py-1 text-xs" onClick={copy}>
+                    <div className="kw-display text-5xl tracking-[0.2em] text-cyan-300">{lobby.code}</div>
+                    <button className="kw-chip mt-1 px-3 py-1 text-xs" onClick={() => void copy()}>
                       {copied ? "✔ Copied" : "Copy code"}
                     </button>
                   </div>
-                  <button className="kw-btn ghost small w-full" onClick={fillAi} disabled={seats.length >= 8}>
-                    <span>🤖 Fill with AI</span>
-                  </button>
-                  <button className="kw-btn w-full" disabled={seats.length < 2 || countdown !== null} onClick={() => startCountdown(mode, seats)}>
+                  <button className="kw-btn w-full" disabled={!canStart} onClick={() => sessionRef.current?.requestStart()}>
                     <span>▶ Start Match</span>
                   </button>
+                  {!allReady && <div className="text-center text-xs text-yellow-200">At least two connected players must be ready.</div>}
                 </>
               )}
             </div>
@@ -257,73 +219,63 @@ export default function Lobby({ profile, onStart, onBack }: { profile: Profile; 
               <input
                 value={joinCode}
                 maxLength={5}
-                onChange={(e) => {
-                  setJoinCode(e.target.value.toUpperCase());
+                disabled={isRoom || pending}
+                onChange={(event) => {
+                  setJoinCode(event.target.value.toUpperCase());
                   setError("");
                 }}
-                onKeyDown={(e) => e.key === "Enter" && joinRoom()}
+                onKeyDown={(event) => event.key === "Enter" && void connect(() => joinRoom(joinCode, profile))}
                 placeholder="ABCDE"
                 className="kw-display w-full rounded-lg border border-white/20 bg-black/40 px-3 py-2 text-center text-3xl tracking-[0.3em] outline-none focus:border-cyan-300"
               />
-              {error && <div className="text-sm text-red-300">{error}</div>}
-              <button className="kw-btn pink w-full" onClick={joinRoom}>
-                <span>→ Join Room</span>
-              </button>
-              {status === "room" && youSeat && (
+              {isRoom && (
+                <button className="kw-btn w-full" disabled={!canReady} onClick={() => sessionRef.current?.setReady(!self?.ready)}>
+                  <span>{self?.ready ? "✔ Ready" : "✔ Ready Up"}</span>
+                </button>
+              )}
+              {!isRoom && (
                 <button
-                  className="kw-btn w-full"
-                  disabled={countdown !== null}
-                  onClick={() => {
-                    const next = seats.map((s) => (s.you ? { ...s, ready: true } : s));
-                    setSeats(next);
-                    startCountdown(mode, next);
-                  }}
+                  className="kw-btn pink w-full"
+                  disabled={pending}
+                  onClick={() => void connect(() => joinRoom(joinCode, profile))}
                 >
-                  <span>✔ Ready Up</span>
+                  <span>{pending ? "Joining…" : "→ Join Room"}</span>
                 </button>
               )}
             </div>
           )}
+
+          {error && <div role="alert" className="text-sm text-red-300">{error}</div>}
+          {pending && !isRoom && <div className="text-xs text-slate-400">Waiting for the multiplayer server…</div>}
         </div>
 
         <div className="kw-panel p-4">
           <div className="mb-3 flex items-center justify-between">
-            <div className="kw-display text-2xl text-white">
-              {status === "searching" ? "Searching for drivers…" : status === "found" ? "Match found!" : status === "room" ? `Room ${code}` : "Lobby"}
-            </div>
+            <div className="kw-display text-2xl text-white">{isRoom ? `${statusLabel}${lobby.code ? ` · ${lobby.code}` : ""}` : "Lobby"}</div>
             <div className="text-sm text-slate-300">
-              {seats.length}/8 · {MODES.find((m) => m.id === mode)?.label}
+              {lobby?.players.filter((player) => player.connected).length ?? 0}/8 · {MODES.find((option) => option.id === (lobby?.mode ?? mode))?.label}
             </div>
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
-            {slots.map((s, i) => {
-              const teamCol = mode === "team" ? hex(TEAM_COLORS[i % 2]) : undefined;
+            {slots.map((player, index) => {
+              const teamCol = lobby?.mode === "team" ? hex(TEAM_COLORS[index % 2]) : undefined;
               return (
-                <div key={i} className={`flex h-[58px] items-center gap-3 rounded-xl border px-3 ${s ? "border-white/15 bg-white/5" : "border-dashed border-white/10 bg-black/20"}`} style={s && teamCol ? { borderLeft: `4px solid ${teamCol}` } : undefined}>
-                  {s ? (
+                <div key={index} className={`flex h-[58px] items-center gap-3 rounded-xl border px-3 ${player ? "border-white/15 bg-white/5" : "border-dashed border-white/10 bg-black/20"}`} style={player && teamCol ? { borderLeft: `4px solid ${teamCol}` } : undefined}>
+                  {player ? (
                     <>
-                      <div className="kw-pop flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-2xl">{s.avatar}</div>
+                      <div className="kw-pop flex h-10 w-10 items-center justify-center rounded-full bg-black/50 text-2xl">{player.avatar}</div>
                       <div className="min-w-0 flex-1">
                         <div className="truncate font-bold">
-                          {s.name} {s.you && <span className="text-cyan-300">(you)</span>}
+                          {player.displayName} {player.playerId === self?.playerId && <span className="text-cyan-300">(you)</span>}
                         </div>
                         <div className="text-[11px] uppercase tracking-wider text-slate-400">
-                          {s.host ? "Host · " : ""}
-                          {s.ai ? "AI driver" : "Player"} · <span className={s.ready ? "text-green-300" : "text-yellow-300"}>{s.ready ? "Ready" : "Not ready"}</span>
+                          {player.host ? "Host · " : ""}
+                          {!player.connected ? "Disconnected" : player.ready ? "Ready" : "Not ready"}
                         </div>
                       </div>
-                      {isHost && s.ai && !countdown && (
-                        <button className="kw-chip px-2 py-1 text-xs" onClick={() => kick(i)}>
-                          ✕
-                        </button>
-                      )}
                     </>
-                  ) : isHost && status === "room" ? (
-                    <button className="kw-chip w-full py-2 text-sm text-slate-300" onClick={addAi}>
-                      ＋ Add AI driver
-                    </button>
                   ) : (
-                    <div className="w-full text-center text-sm text-slate-500">{status === "searching" ? "Searching…" : "Empty seat"}</div>
+                    <div className="w-full text-center text-sm text-slate-500">{isRoom ? "Empty seat" : "Waiting for room"}</div>
                   )}
                 </div>
               );
@@ -331,9 +283,19 @@ export default function Lobby({ profile, onStart, onBack }: { profile: Profile; 
           </div>
           {countdown !== null && (
             <div className="mt-4 text-center">
-              <div className="text-xs uppercase tracking-[0.4em] text-slate-300">Match starts in</div>
+              <div className="text-xs uppercase tracking-[0.4em] text-slate-300">Shared countdown</div>
               <div className="kw-display kw-title text-7xl">{countdown}</div>
             </div>
+          )}
+          {lobby?.phase === "playing" && (
+            <div className="mt-4 text-center text-sm text-green-200">
+              Match {lobby.matchId?.slice(0, 8)} · map {lobby.mapId}
+            </div>
+          )}
+          {lobby?.phase === "ended" && isHost && (
+            <button className="kw-btn mt-4 w-full" onClick={() => sessionRef.current?.requestRestart()}>
+              <span>↻ Restart Match</span>
+            </button>
           )}
         </div>
       </div>

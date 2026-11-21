@@ -1,3 +1,5 @@
+import type { NetworkGameConfig } from "./networkTypes";
+
 export type Mode = "ffa" | "team" | "survival";
 export type WeaponId = "rocket" | "mg" | "mine" | "bomb" | "shield" | "boost";
 export type Quality = "auto" | "low" | "medium" | "high";
@@ -105,6 +107,7 @@ export interface GameConfig {
   settings: Settings;
   roster: RosterEntry[];
   touch: boolean;
+  network?: NetworkGameConfig;
 }
 
 export interface HudWeapon {
@@ -184,6 +187,7 @@ export interface MatchResult {
   kills: number;
   deaths: number;
   win: boolean;
+  draw: boolean;
   rank: number;
   teamScores: [number, number];
   wave: number;

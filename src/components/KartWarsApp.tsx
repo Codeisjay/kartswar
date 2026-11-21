@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { audio } from "@/game/audio";
 import { makeRoster } from "@/game/roster";
 import { clearScores, loadProfile, loadScores, loadSettings, saveProfile, saveSettings, type ScoreEntry } from "@/game/storage";
@@ -8,6 +8,8 @@ import { DEFAULT_PROFILE, DEFAULT_SETTINGS, WEAPONS, WEAPON_IDS, type GameConfig
 import GameView from "./GameView";
 import KartSelect from "./KartSelect";
 import Lobby from "./Lobby";
+import type { MultiplayerSession } from "@/game/multiplayerClient";
+import type { MatchStart } from "@/game/networkTypes";
 import ScoreTable from "./Scores";
 import SettingsPanel from "./SettingsPanel";
 
@@ -27,6 +29,9 @@ export default function KartWarsApp() {
   const [ready, setReady] = useState(false);
   const [cfg, setCfg] = useState<GameConfig | null>(null);
   const [gameKey, setGameKey] = useState(0);
+  const networkSessionRef = useRef<MultiplayerSession | null>(null);
+  const lastNetworkMatchRef = useRef<string | null>(null);
+  const unsubscribeMatchRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     setSettings(loadSettings());
@@ -60,14 +65,57 @@ export default function KartWarsApp() {
     [profile, settings],
   );
 
+  const startNetworkGame = useCallback((session: MultiplayerSession, match: MatchStart) => {
+    if (lastNetworkMatchRef.current === match.matchId) return;
+    const self = match.players.find((player) => player.playerId === session.ownPlayerId);
+    if (!self) {
+      console.error("The multiplayer server started a match without this client's player identity.");
+      return;
+    }
+    lastNetworkMatchRef.current = match.matchId;
+    audio.init();
+    audio.setVolumes(settings.master, settings.music, settings.sfx);
+    const touch = typeof window !== "undefined" && (window.matchMedia("(pointer: coarse)").matches || "ontouchstart" in window);
+    setCfg({
+      mode: match.mode,
+      profile: { ...profile, name: self.displayName, avatar: self.avatar, kartId: self.kartId },
+      settings: { ...settings },
+      roster: [],
+      touch,
+      network: session.createGameConfig(match),
+    });
+    setGameKey((key) => key + 1);
+    setScreen("game");
+  }, [profile, settings]);
+
+  const onNetworkSession = useCallback((session: MultiplayerSession | null) => {
+    unsubscribeMatchRef.current?.();
+    unsubscribeMatchRef.current = null;
+    networkSessionRef.current = session;
+    lastNetworkMatchRef.current = null;
+    if (session) unsubscribeMatchRef.current = session.onMatchStart((match) => startNetworkGame(session, match));
+  }, [startNetworkGame]);
+
   const onSettings = useCallback((s: Settings) => {
     setSettings(s);
     audio.setVolumes(s.master, s.music, s.sfx);
   }, []);
 
-  const restart = useCallback(() => setGameKey((k) => k + 1), []);
+  const restart = useCallback(() => {
+    if (cfg?.network) {
+      if (cfg.network.canControlMatch()) networkSessionRef.current?.requestRestart();
+      return;
+    }
+    setGameKey((key) => key + 1);
+  }, [cfg]);
   const exitGame = useCallback(() => {
     if (cfg) setSettings((s) => ({ ...s, master: cfg.settings.master }));
+    const session = networkSessionRef.current;
+    unsubscribeMatchRef.current?.();
+    unsubscribeMatchRef.current = null;
+    networkSessionRef.current = null;
+    lastNetworkMatchRef.current = null;
+    if (session) void session.leave();
     setCfg(null);
     setScores(loadScores());
     setScreen("menu");
@@ -166,7 +214,7 @@ export default function KartWarsApp() {
 
       {screen === "kart" && <KartSelect profile={profile} onChange={setProfile} onBack={() => go("menu")} />}
       {screen === "settings" && <SettingsPanel settings={settings} onChange={onSettings} onBack={() => go("menu")} />}
-      {screen === "lobby" && <Lobby profile={profile} onStart={startGame} onBack={() => go("menu")} />}
+      {screen === "lobby" && <Lobby profile={profile} onSession={onNetworkSession} onBack={() => go("menu")} />}
 
       {screen === "scores" && (
         <div className="absolute inset-0 z-10 flex flex-col overflow-y-auto p-4 sm:p-8">

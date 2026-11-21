@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { getSpawnPoints } from "./spawns";
 
 export interface Surface {
   x0: number;
@@ -481,13 +482,7 @@ export function buildArena(scene: THREE.Scene, quality: "low" | "medium" | "high
   }
 
   // ---------- spawns & pickups ----------
-  const spawns: SpawnPoint[] = [];
-  for (let i = 0; i < 12; i++) {
-    const a = (i / 12) * Math.PI * 2;
-    const x = Math.cos(a) * 58;
-    const z = Math.sin(a) * 58;
-    spawns.push({ x, z, heading: Math.atan2(-x, -z) });
-  }
+  const spawns = getSpawnPoints();
   const pickupSpots: PickupSpot[] = [];
   for (let i = 0; i < 8; i++) {
     const a = ((i + 0.5) / 8) * Math.PI * 2;

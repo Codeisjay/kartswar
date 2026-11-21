@@ -55,6 +55,7 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
       onEnd: (r) => {
         if (resultRef.current) return;
         resultRef.current = r;
+        cfg.network?.finishMatch(cfg.network.matchId);
         const entry: ScoreEntry = { name: cfg.profile.name || "Driver", avatar: cfg.profile.avatar, score: r.score, kills: r.kills, mode: r.mode, date: Date.now(), wave: r.mode === "survival" ? r.wave : undefined };
         const { scores, rank } = addScore(entry);
         setResult({ r, scores, rank });
@@ -103,7 +104,7 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
       if (e.code === "Escape" || e.code === "KeyP") {
         e.preventDefault();
         if (!resultRef.current) setPause(!(gameRef.current?.isPaused() ?? false));
-      } else if (e.code === "KeyR" && (resultRef.current || gameRef.current?.isPaused())) {
+      } else if (e.code === "KeyR" && (resultRef.current || (!cfg.network && gameRef.current?.isPaused()))) {
         onRestart();
       } else if (e.code === "Enter" && resultRef.current) {
         onRestart();
@@ -123,7 +124,7 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [onRestart, setPause]);
+  }, [cfg.network, onRestart, setPause]);
 
   const hpPct = hud ? (hud.hp / hud.maxHp) * 100 : 100;
   const w = hud?.weapon ? WEAPONS[hud.weapon.id] : null;
@@ -336,8 +337,8 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
               <button className="kw-btn" onClick={() => setPause(false)}>
                 <span>▶ Resume</span>
               </button>
-              <button className="kw-btn cyan" onClick={onRestart}>
-                <span>↻ Restart (R)</span>
+              <button className="kw-btn cyan" disabled={!!cfg.network} onClick={onRestart}>
+                <span>{cfg.network ? "Restart after match" : "↻ Restart (R)"}</span>
               </button>
               <button className="kw-btn ghost" onClick={onExit}>
                 <span>⌂ Quit to Menu</span>
@@ -371,10 +372,10 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
           <div className="kw-panel kw-pop my-auto w-[min(96vw,820px)] p-5 sm:p-7">
             <div className="text-center">
               <h2 className="kw-display kw-title text-6xl sm:text-7xl">
-                {result.r.mode === "survival" ? "GAME OVER" : result.r.win ? "VICTORY!" : result.r.mode === "team" && result.r.teamScores[0] === result.r.teamScores[1] ? "DRAW" : "DEFEAT"}
+                {result.r.mode === "survival" ? "GAME OVER" : result.r.draw ? "DRAW" : result.r.win ? "VICTORY!" : "DEFEAT"}
               </h2>
               <div className="mt-1 text-sm uppercase tracking-[0.3em] text-slate-300">
-                {result.r.mode === "ffa" && `You finished #${result.r.rank}`}
+                {result.r.mode === "ffa" && `${result.r.draw ? "Tied for" : "You finished"} #${result.r.rank}`}
                 {result.r.mode === "team" && `Blue ${result.r.teamScores[0]} — ${result.r.teamScores[1]} Red`}
                 {result.r.mode === "survival" && `You survived ${result.r.wave} wave${result.r.wave === 1 ? "" : "s"}`}
               </div>
@@ -391,7 +392,11 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
                 <div className="overflow-hidden rounded-lg border border-white/10 text-sm">
                   {result.r.rows.slice(0, 8).map((row, i) => (
                     <div key={i} className={`flex items-center gap-2 border-b border-white/5 px-3 py-1.5 last:border-0 ${row.isPlayer ? "bg-yellow-300/15 font-bold text-yellow-100" : ""}`}>
-                      <span className="w-4 text-slate-400">{i + 1}</span>
+                      <span className="w-4 text-slate-400">
+                        {1 + result.r.rows.filter((other) => other.score > row.score
+                          || (other.score === row.score && other.kills > row.kills)
+                          || (other.score === row.score && other.kills === row.kills && other.deaths < row.deaths)).length}
+                      </span>
                       {result.r.mode === "team" && <span className="h-2.5 w-2.5 rounded-full" style={{ background: hex(TEAM_COLORS[row.team] ?? 0xffffff) }} />}
                       <span>{row.avatar}</span>
                       <span className="flex-1 truncate">{row.name}</span>
@@ -409,8 +414,8 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
               </div>
             </div>
             <div className="mt-6 flex flex-wrap justify-center gap-3">
-              <button className="kw-btn" onClick={onRestart} autoFocus>
-                <span>↻ Play Again (R)</span>
+              <button className="kw-btn" disabled={!!cfg.network && !cfg.network.canControlMatch()} onClick={onRestart} autoFocus>
+                <span>{cfg.network && !cfg.network.canControlMatch() ? "Waiting for host" : "↻ Play Again (R)"}</span>
               </button>
               <button className="kw-btn ghost" onClick={onExit}>
                 <span>⌂ Main Menu</span>
