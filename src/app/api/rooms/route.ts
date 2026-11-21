@@ -8,6 +8,8 @@ export const dynamic = "force-dynamic";
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const STALE_MS = 45_000;
 const COUNTDOWN_MS = 4_000;
+const JANITOR_INTERVAL_MS = 5_000;
+const lastJanitorAt = new Map<string, number>();
 
 function newCode(): string {
   let c = "";
@@ -110,6 +112,18 @@ async function janitor(code: string) {
   }
   await ensureHost(code);
   await db.delete(roomEvents).where(and(eq(roomEvents.roomCode, code), lt(roomEvents.createdAt, new Date(Date.now() - 120_000))));
+}
+
+async function maybeJanitor(code: string) {
+  const now = Date.now();
+  if (now - (lastJanitorAt.get(code) ?? 0) < JANITOR_INTERVAL_MS) return;
+  lastJanitorAt.set(code, now);
+  if (lastJanitorAt.size > 256) {
+    for (const [roomCode, lastRun] of lastJanitorAt) {
+      if (now - lastRun > STALE_MS) lastJanitorAt.delete(roomCode);
+    }
+  }
+  await janitor(code);
 }
 
 async function pushEvent(code: string, type: string, payload: Record<string, unknown>) {
@@ -371,7 +385,7 @@ export async function POST(req: Request) {
       } else if (currentRoom?.status === "countdown" || currentRoom?.status === "ended") {
         await db.update(roomPlayers).set({ updatedAt: new Date() }).where(eq(roomPlayers.id, playerId));
       }
-      await janitor(code);
+      await maybeJanitor(code);
       const room = await roomInfo(code);
       if (room?.status === "lobby" && Date.now() - (room.updatedAt?.getTime() ?? 0) > 10_000) {
         await db.update(rooms).set({ updatedAt: new Date() }).where(and(eq(rooms.code, code), eq(rooms.status, "lobby")));
@@ -424,7 +438,7 @@ export async function GET(req: Request) {
   try {
     const room = await roomInfo(code.toUpperCase());
     if (!room) return Response.json({ ok: false, error: "No such room" }, { status: 404 });
-    await janitor(code.toUpperCase());
+    await maybeJanitor(code.toUpperCase());
     const [latestEvent] = await db
       .select({ id: roomEvents.id })
       .from(roomEvents)
