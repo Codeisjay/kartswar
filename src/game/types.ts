@@ -97,6 +97,20 @@ export interface RosterEntry {
   name: string;
   avatar: string;
   kartId: number;
+  slot?: number;
+}
+
+export interface NetworkSeat {
+  id: string;
+  name: string;
+  avatar: string;
+  kartId: number;
+  isHost: boolean;
+  isAi: boolean;
+  ready: boolean;
+  slot: number;
+  updatedAt: number;
+  state: Record<string, unknown>;
 }
 
 export interface GameConfig {
@@ -111,7 +125,17 @@ export interface GameConfig {
   tutorial?: boolean;
   tutorialStep?: number;
   /** A real player connected over a room (multiplayer). */
-  net?: { code: string; playerId: string };
+  net?: {
+    code: string;
+    playerId: string;
+    playerName: string;
+    slot: number;
+    isHost: boolean;
+    startAt: number | null;
+    serverOffset: number;
+    cursor: number;
+    initialState?: Record<string, unknown>;
+  };
   /** Human opponents driven by the network instead of AI. */
   remotes?: RemoteDesc[];
 }
@@ -122,6 +146,9 @@ export interface RemoteDesc {
   avatar: string;
   kartId: number;
   team: number;
+  slot: number;
+  state?: Record<string, unknown>;
+  updatedAt?: number;
 }
 
 export interface HudWeapon {
@@ -201,6 +228,7 @@ export interface MatchResult {
   kills: number;
   deaths: number;
   win: boolean;
+  draw: boolean;
   rank: number;
   teamScores: [number, number];
   wave: number;
@@ -213,6 +241,10 @@ export interface GameCallbacks {
   onKill: (k: KillEntry) => void;
   onEvent: (e: GameEvent) => void;
   onEnd: (r: MatchResult) => void;
+  onNetworkMatchEnd?: () => void;
+  onNetworkHostChange?: (isHost: boolean) => void;
+  onNetworkCountdown?: (startAt: number) => void;
+  onNetworkRestart?: (seed: number, startAt: number, players: NetworkSeat[]) => void;
   onTutorialState?: (state: TutorialState) => void;
 }
 
