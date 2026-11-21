@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Game } from "@/game/engine";
 import { addScore, loadScores, type ScoreEntry } from "@/game/storage";
 import { saveTutorialProgress } from "@/game/storage";
-import { TEAM_COLORS, WEAPONS, type GameConfig, type GameEvent, type HudState, type KillEntry, type MatchResult, type TutorialState } from "@/game/types";
+import { TEAM_COLORS, WEAPONS, type GameConfig, type GameEvent, type HudState, type KillEntry, type MatchResult, type NetworkSeat, type TutorialState } from "@/game/types";
 import TouchControls from "./TouchControls";
 import ScoreTable from "./Scores";
 import { HelpOverlay, TUTORIAL_STEPS, TutorialOverlay } from "./Guidance";
@@ -12,7 +12,8 @@ import { HelpOverlay, TUTORIAL_STEPS, TutorialOverlay } from "./Guidance";
 interface Props {
   cfg: GameConfig;
   onExit: () => void;
-  onRestart: () => void;
+  onRestart: (match?: { seed: number; startAt: number; players: NetworkSeat[] }) => void;
+  restartError?: string;
 }
 
 const fmt = (s: number) => {
@@ -21,7 +22,7 @@ const fmt = (s: number) => {
 };
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
-export default function GameView({ cfg, onExit, onRestart }: Props) {
+export default function GameView({ cfg, onExit, onRestart, restartError }: Props) {
   const isTouch = cfg.touch;
   const mountRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -42,6 +43,10 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
   const [pressedKeys, setPressedKeys] = useState<Set<string>>(() => new Set());
   const [tutorialStep, setTutorialStep] = useState(cfg.tutorialStep ?? 0);
   const [tutorialState, setTutorialState] = useState<TutorialState | null>(null);
+  const [networkError, setNetworkError] = useState("");
+  const [isHost, setIsHost] = useState(cfg.net?.isHost ?? false);
+  const [restartStartAt, setRestartStartAt] = useState<number | null>(null);
+  const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
   const [contextTip, setContextTip] = useState<string | null>(
     cfg.tutorial ? null : cfg.touch ? "LEFT STICK STEERS · AUTO-GAS" : "W / ↑ ACCELERATE · SPACE DRIFT · SHIFT BOOST · F FIRE",
   );
@@ -61,6 +66,12 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
     }
   }, [isTouch]);
 
+  const setPause = useCallback((p: boolean) => {
+    if (resultRef.current) return;
+    gameRef.current?.setPaused(p);
+    setPaused(p);
+  }, []);
+
   useEffect(() => {
     if (!mountRef.current || !overlayRef.current) return;
     const best = loadScores().reduce((m, s) => Math.max(m, s.score), 0);
@@ -73,17 +84,54 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
       onEnd: (r) => {
         if (resultRef.current) return;
         resultRef.current = r;
+        if (cfg.net?.isHost) {
+          void gameRef.current?.net?.finish().then((response) => {
+            if (!response.ok) setNetworkError(response.error ?? "Could not synchronize match end");
+          }).catch((error: unknown) => {
+            setNetworkError(error instanceof Error ? error.message : "Could not synchronize match end");
+          });
+        }
         const entry: ScoreEntry = { name: cfg.profile.name || "Driver", avatar: cfg.profile.avatar, score: r.score, kills: r.kills, mode: r.mode, date: Date.now(), wave: r.mode === "survival" ? r.wave : undefined };
         const { scores, rank } = addScore(entry);
         setResult({ r, scores, rank });
       },
+      onNetworkCountdown: setRestartStartAt,
+      onNetworkRestart: (seed, startAt, players) => onRestart({ seed, startAt, players }),
+      onNetworkHostChange: setIsHost,
+      onNetworkMatchEnd: () => setPause(false),
     });
     gameRef.current = game;
+    const removePageExitHandler = game.net?.watchPageExit();
     return () => {
+      removePageExitHandler?.();
       game.dispose();
       gameRef.current = null;
     };
-  }, [cfg, handleEvent]);
+  }, [cfg, handleEvent, onRestart, setPause]);
+
+  useEffect(() => {
+    if (!cfg.net) return;
+    const timerId = window.setInterval(() => {
+      void gameRef.current?.net?.heartbeat().then((response) => {
+        if (!response.ok) setNetworkError(response.error ?? "Room connection was lost");
+        else setNetworkError("");
+      }).catch((error: unknown) => {
+        setNetworkError(error instanceof Error ? error.message : "Room connection was lost");
+      });
+    }, 15_000);
+    return () => window.clearInterval(timerId);
+  }, [cfg.net]);
+
+  useEffect(() => {
+    if (restartStartAt === null) return;
+    const update = () => {
+      const now = Date.now() + (cfg.net?.serverOffset ?? 0);
+      setRestartCountdown(Math.max(0, Math.ceil((restartStartAt - now) / 1_000)));
+    };
+    update();
+    const timerId = window.setInterval(update, 100);
+    return () => window.clearInterval(timerId);
+  }, [cfg.net?.serverOffset, restartStartAt]);
 
   useEffect(() => {
     if (cfg.tutorial) gameRef.current?.setTutorialStep(tutorialStep);
@@ -124,12 +172,6 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
     return () => clearTimeout(t);
   }, [hit]);
 
-  const setPause = useCallback((p: boolean) => {
-    if (resultRef.current) return;
-    gameRef.current?.setPaused(p);
-    setPaused(p);
-  }, []);
-
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       setPressedKeys((previous) => {
@@ -141,10 +183,10 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
       if (e.code === "Escape" || e.code === "KeyP") {
         e.preventDefault();
         if (!resultRef.current) setPause(!(gameRef.current?.isPaused() ?? false));
-      } else if (e.code === "KeyR" && (resultRef.current || gameRef.current?.isPaused())) {
-        onRestart();
+      } else if (e.code === "KeyR" && (resultRef.current || (!cfg.net && gameRef.current?.isPaused()))) {
+        if (!cfg.net || isHost) onRestart();
       } else if (e.code === "Enter" && resultRef.current) {
-        onRestart();
+        if (!cfg.net || isHost) onRestart();
       }
     };
     const onKeyUp = (e: KeyboardEvent) => {
@@ -171,7 +213,7 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
       window.removeEventListener("blur", onBlur);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [onRestart, setPause]);
+  }, [cfg.net, isHost, onRestart, setPause]);
 
   const tutorialProgress = (() => {
     if (!cfg.tutorial || !tutorialState) return { canContinue: false, detail: "Waiting for controls…" };
@@ -411,6 +453,7 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
           </div>
         </div>
       )}
+      {networkError && !result && <div className="pointer-events-none absolute left-1/2 top-[12%] z-30 -translate-x-1/2 rounded-lg bg-red-500/20 px-3 py-2 text-sm text-red-100">{networkError}</div>}
 
       {cfg.tutorial && !paused && !result && tutorialState && (
         <TutorialOverlay
@@ -439,9 +482,9 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
               <button className="kw-btn" onClick={() => setPause(false)}>
                 <span>▶ Resume</span>
               </button>
-              <button className="kw-btn cyan" onClick={onRestart}>
+              {!cfg.net && <button className="kw-btn cyan" onClick={() => onRestart()}>
                 <span>↻ Restart (R)</span>
-              </button>
+              </button>}
               <button className="kw-btn ghost" onClick={() => setHelpOpen(true)}>
                 <span>⌘ Help / Controls</span>
               </button>
@@ -479,13 +522,15 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
           <div className="kw-panel kw-pop my-auto w-[min(96vw,820px)] p-5 sm:p-7">
             <div className="text-center">
               <h2 className="kw-display kw-title text-6xl sm:text-7xl">
-                {result.r.mode === "survival" ? "GAME OVER" : result.r.win ? "VICTORY!" : result.r.mode === "team" && result.r.teamScores[0] === result.r.teamScores[1] ? "DRAW" : "DEFEAT"}
+                {result.r.mode === "survival" ? "GAME OVER" : result.r.draw ? "DRAW" : result.r.win ? "VICTORY!" : "DEFEAT"}
               </h2>
               <div className="mt-1 text-sm uppercase tracking-[0.3em] text-slate-300">
                 {result.r.mode === "ffa" && `You finished #${result.r.rank}`}
                 {result.r.mode === "team" && `Blue ${result.r.teamScores[0]} — ${result.r.teamScores[1]} Red`}
                 {result.r.mode === "survival" && `You survived ${result.r.wave} wave${result.r.wave === 1 ? "" : "s"}`}
               </div>
+              {(restartError || networkError) && <div className="mt-3 rounded-lg bg-red-500/15 px-3 py-2 text-center text-sm text-red-200">{restartError || networkError}</div>}
+              {restartCountdown !== null && <div className="mt-3 text-center text-sm uppercase tracking-[0.3em] text-cyan-200">Match starts in {restartCountdown}</div>}
             </div>
             <div className="mt-5 grid grid-cols-3 gap-3 text-center">
               <Stat label="Score" value={result.r.score.toLocaleString()} accent />
@@ -517,8 +562,8 @@ export default function GameView({ cfg, onExit, onRestart }: Props) {
               </div>
             </div>
             <div className="mt-6 flex flex-wrap justify-center gap-3">
-              <button className="kw-btn" onClick={onRestart} autoFocus>
-                <span>↻ Play Again (R)</span>
+              <button className="kw-btn" onClick={() => onRestart()} disabled={!!cfg.net && !isHost} autoFocus>
+                <span>{cfg.net && !isHost ? "Waiting for host" : cfg.net ? "↻ Restart Match" : "↻ Play Again (R)"}</span>
               </button>
               <button className="kw-btn ghost" onClick={onExit}>
                 <span>⌂ Main Menu</span>

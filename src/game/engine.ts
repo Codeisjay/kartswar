@@ -5,7 +5,7 @@ import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { createPickupMesh, disposeScene, surfaceHeight, type Arena, type Circle, type PickupZone } from "./arena";
 import { buildMap, mapDef } from "./maps";
-import { RoomNet, type KartState, type NetEvent } from "./net";
+import { RoomNet, type KartState, type NetEvent, type NetPlayer, type NetRoom } from "./net";
 import { mulberry32 } from "./maps/common";
 
 const iconMats = new Map<string, THREE.SpriteMaterial>();
@@ -63,7 +63,8 @@ export interface Kart {
   isRemote: boolean;
   tutorialTarget: boolean;
   remoteId?: string;
-  netTarget: NetKartState | null;
+  netSamples: NetKartState[];
+  spawnSlot: number | null;
   /** seconds spent out of bounds / buried before recovery triggers */
   recoverT: number;
   team: number;
@@ -116,14 +117,24 @@ export interface NetKartState {
   x: number;
   y: number;
   z: number;
+  vx: number;
+  vz: number;
   heading: number;
+  pitch: number;
+  roll: number;
+  boosting: boolean;
+  drifting: boolean;
+  driftDir: number;
   aimX: number;
   aimZ: number;
   weapon: WeaponId | null;
   ammo: number;
   alive: boolean;
   hp: number;
-  seen: number;
+  score: number;
+  kills: number;
+  deaths: number;
+  serverTime: number;
 }
 
 export type PickupLoad = WeaponId | "health";
@@ -318,6 +329,7 @@ export class Game {
   constructor(container: HTMLElement, overlay: HTMLElement, minimap: HTMLCanvasElement | null, cfg: GameConfig, cb: GameCallbacks) {
     this.cfg = cfg;
     this.cb = cb;
+    this.netMatchSeed = cfg.seed;
     this.container = container;
     this.overlay = overlay;
     this.minimap = minimap;
@@ -419,6 +431,25 @@ export class Game {
       this.net = new RoomNet();
       this.net.code = cfg.net.code;
       this.net.playerId = cfg.net.playerId;
+      this.net.setServerOffset(cfg.net.serverOffset);
+      this.net.cursor = cfg.net.cursor;
+      this.introT = cfg.net.startAt ? Math.max(0, (cfg.net.startAt - this.net.serverNow()) / 1_000) : 0;
+      const state = cfg.net.initialState;
+      if (state && typeof state.x === "number" && typeof state.z === "number") {
+        this.player.x = state.x;
+        this.player.y = typeof state.y === "number" ? state.y : this.player.y;
+        this.player.z = state.z;
+        this.player.vx = typeof state.vx === "number" ? state.vx : 0;
+        this.player.vz = typeof state.vz === "number" ? state.vz : 0;
+        this.player.heading = typeof state.heading === "number" ? state.heading : this.player.heading;
+        this.player.hp = typeof state.hp === "number" ? state.hp : this.player.hp;
+        this.player.score = typeof state.score === "number" ? state.score : this.player.score;
+        this.player.kills = typeof state.kills === "number" ? state.kills : this.player.kills;
+        this.player.deaths = typeof state.deaths === "number" ? state.deaths : this.player.deaths;
+        this.player.alive = state.alive !== false;
+        this.player.rig.group.position.set(this.player.x, this.player.y, this.player.z);
+        this.player.rig.group.visible = this.player.alive;
+      }
     }
     this.camHeading = this.player.heading;
     this.lastT = performance.now();
@@ -431,17 +462,17 @@ export class Game {
     const roster = cfg.roster.slice(0, 7);
     const mode = cfg.mode;
     const spawnOrder = this.shuffle([...this.arena.spawns.keys()]);
-    const playerTeam = mode === "team" ? 0 : mode === "survival" ? 0 : -1;
-    const p = this.makeKart({ name: cfg.profile.name || "Driver", avatar: cfg.profile.avatar, preset: KART_PRESETS[cfg.profile.kartId] ?? KART_PRESETS[0], glow: cfg.profile.glow, isPlayer: true, team: playerTeam, skill: 1 });
+    const playerTeam = mode === "team" ? (cfg.net ? cfg.net.slot % 2 : 0) : mode === "survival" ? 0 : -1;
+    const p = this.makeKart({ name: cfg.profile.name || "Driver", avatar: cfg.profile.avatar, preset: KART_PRESETS[cfg.profile.kartId] ?? KART_PRESETS[0], glow: cfg.profile.glow, isPlayer: true, team: playerTeam, skill: 1, spawnSlot: cfg.net?.slot ?? null });
     this.player = p;
-    this.placeKart(p, spawnOrder[0]);
+    this.placeKart(p, cfg.net ? cfg.net.slot : spawnOrder[0]);
     if (mode === "survival") {
       this.lives = 3;
       return;
     }
     // real players connected over a room
-    const remotes = (cfg.remotes ?? []).slice(0, 7).map((r) =>
-      this.makeKart({
+    const remotes = (cfg.remotes ?? []).slice(0, 7).map((r) => {
+      const kart = this.makeKart({
         name: r.name,
         avatar: r.avatar,
         preset: KART_PRESETS[r.kartId % KART_PRESETS.length],
@@ -449,24 +480,40 @@ export class Game {
         team: mode === "team" ? r.team : -1,
         skill: 1,
         remoteId: r.id,
+        spawnSlot: r.slot,
         glow: 0x35e8ff,
-      }),
-    );
+      });
+      if (r.state) this.seedRemote(kart, r.state, r.updatedAt);
+      return kart;
+    });
     const aiCount = Math.max(0, Math.min(7 - remotes.length, roster.length));
     const team0Bots = Math.max(0, Math.ceil((remotes.length + aiCount + 1) / 2) - 1 - remotes.filter((k) => k.team === 0).length);
     const bots = roster.slice(0, aiCount).map((r, i) => {
       const skill = cfg.settings.difficulty === "easy" ? 0.3 : cfg.settings.difficulty === "hard" ? 0.75 : 0.5;
-      const team = mode === "team" ? (i < team0Bots ? 0 : 1) : -1;
-      return this.makeKart({ name: r.name, avatar: r.avatar, preset: KART_PRESETS[r.kartId % KART_PRESETS.length], isPlayer: false, team, skill: clamp(skill + (this.rng() - 0.5) * 0.18, 0.2, 1) });
+      const team = mode === "team" ? (r.slot === undefined ? (i < team0Bots ? 0 : 1) : r.slot % 2) : -1;
+      return this.makeKart({ name: r.name, avatar: r.avatar, preset: KART_PRESETS[r.kartId % KART_PRESETS.length], isPlayer: false, team, skill: clamp(skill + (this.rng() - 0.5) * 0.18, 0.2, 1), spawnSlot: r.slot ?? null });
     });
     const everyone = [...remotes, ...bots];
     // team battle: interleave teams across spawn slots so neither side clusters
     const ordered = mode === "team"
       ? [...this.interleave(everyone.filter((k) => k.team === 0), everyone.filter((k) => k.team === 1))]
       : everyone;
-    ordered.forEach((k, i) => {
-      this.placeKart(k, spawnOrder[(i + 1) % spawnOrder.length]);
-    });
+    if (cfg.net) {
+      const occupied = new Set([cfg.net.slot]);
+      for (const k of ordered) {
+        let slot = k.spawnSlot;
+        if (slot === null || slot === undefined) {
+          slot = 0;
+          while (occupied.has(slot)) slot++;
+        }
+        occupied.add(slot);
+        this.placeKart(k, slot);
+      }
+    } else {
+      ordered.forEach((k, i) => {
+        this.placeKart(k, spawnOrder[(i + 1) % spawnOrder.length]);
+      });
+    }
     if (cfg.tutorial) this.setupTutorialPractice(spawnOrder);
   }
 
@@ -524,7 +571,7 @@ export class Game {
     }
   }
 
-  private makeKart(o: { name: string; avatar: string; preset: KartPreset; glow?: number; isPlayer: boolean; team: number; skill: number; enemyGlow?: boolean; remoteId?: string; tutorialTarget?: boolean }): Kart {
+  private makeKart(o: { name: string; avatar: string; preset: KartPreset; glow?: number; isPlayer: boolean; team: number; skill: number; enemyGlow?: boolean; remoteId?: string; tutorialTarget?: boolean; spawnSlot?: number | null }): Kart {
     const teamColor = o.team >= 0 && this.mode === "team" ? TEAM_COLORS[o.team] : undefined;
     const rig = buildKart(o.preset, {
       primary: teamColor,
@@ -564,7 +611,7 @@ export class Game {
       ai: o.isPlayer || o.remoteId || o.tutorialTarget ? null : newBotState(o.skill),
       trailT: 0, mgSide: 1,
       turret: turret.group, turretBarrel: turret.barrel, turretTipMat: turret.tipMat, turretKick: 0,
-      isRemote: !!o.remoteId, remoteId: o.remoteId, netTarget: null, recoverT: 0,
+      isRemote: !!o.remoteId, remoteId: o.remoteId, netSamples: [], spawnSlot: o.spawnSlot ?? null, recoverT: 0,
       tutorialTarget: !!o.tutorialTarget,
     };
     this.karts.push(k);
@@ -605,6 +652,48 @@ export class Game {
       this.fx.sparks(k.x, 1, k.z, 24, 0xffffff, 0x35e8ff, 12);
       this.sfxAt("respawn", k.x, k.z, 0.8);
     }
+  }
+
+  private seedRemote(k: Kart, state: Record<string, unknown>, serverTime?: number) {
+      if (typeof state.x !== "number" || typeof state.z !== "number") return;
+      const sample: NetKartState = {
+        x: state.x,
+        y: typeof state.y === "number" ? state.y : 0,
+        z: state.z,
+        vx: typeof state.vx === "number" ? state.vx : 0,
+        vz: typeof state.vz === "number" ? state.vz : 0,
+        heading: typeof state.heading === "number" ? state.heading : k.heading,
+        pitch: typeof state.pitch === "number" ? state.pitch : 0,
+        roll: typeof state.roll === "number" ? state.roll : 0,
+        boosting: state.boosting === true,
+        drifting: state.drifting === true,
+        driftDir: typeof state.driftDir === "number" ? state.driftDir : 1,
+        aimX: typeof state.aimX === "number" ? state.aimX : state.x,
+        aimZ: typeof state.aimZ === "number" ? state.aimZ : state.z,
+        weapon: typeof state.weapon === "string" && WEAPON_IDS.includes(state.weapon as WeaponId) ? state.weapon as WeaponId : null,
+        ammo: typeof state.ammo === "number" ? state.ammo : 0,
+        alive: state.alive !== false,
+        hp: typeof state.hp === "number" ? state.hp : 100,
+        score: typeof state.score === "number" ? state.score : 0,
+        kills: typeof state.kills === "number" ? state.kills : 0,
+        deaths: typeof state.deaths === "number" ? state.deaths : 0,
+        serverTime: serverTime ?? this.net?.serverNow() ?? Date.now(),
+      };
+      k.netSamples.push(sample);
+      k.x = sample.x;
+      k.y = sample.y;
+      k.z = sample.z;
+      k.vx = sample.vx;
+      k.vz = sample.vz;
+      k.heading = sample.heading;
+      k.alive = sample.alive;
+      k.hp = sample.hp;
+      k.score = sample.score;
+      k.kills = sample.kills;
+      k.deaths = sample.deaths;
+      k.rig.group.position.set(k.x, k.y, k.z);
+      k.rig.group.visible = k.alive;
+      k.tag.style.display = k.alive ? "" : "none";
   }
 
   private pickSpawn(k: Kart): number {
@@ -662,7 +751,7 @@ export class Game {
     window.removeEventListener("keyup", this.onKeyUp);
     window.removeEventListener("blur", this.onBlur);
     window.removeEventListener("contextmenu", this.onContext);
-    this.net?.leave().catch(() => undefined);
+    if (this.netRestartTimer !== null) window.clearTimeout(this.netRestartTimer);
     this.net = null;
     audio.stopEngine();
     audio.stopMusic();
@@ -869,6 +958,10 @@ export class Game {
   net: RoomNet | null = null;
   private netAcc = 0;
   private netFails = 0;
+  private netInFlight = false;
+  private netMatchSeed: number;
+  private netRestartTimer: number | null = null;
+  private networkPlayers: NetPlayer[] = [];
   private shuffle<T>(arr: T[]): T[] {
     for (let i = arr.length - 1; i > 0; i--) {
       const j = Math.floor(this.rng() * (i + 1));
@@ -966,7 +1059,7 @@ export class Game {
           this.fpsAvgT = 0;
           this.fpsAvgN = 0;
         }
-      }
+      } else this.netTick(dt);
     }
     this.render(dt);
   };
@@ -1950,13 +2043,16 @@ export class Game {
   // -------------------------------------------------- multiplayer net sync
   private netTick(dt: number) {
     const net = this.net;
-    if (!net || this.paused || this.netFails > 6) return;
+    if (!net || this.netInFlight) return;
     this.netAcc += dt;
-    if (this.netAcc < 0.1) return;
+    const interval = Math.min(1, 0.1 * 2 ** Math.min(this.netFails, 4));
+    if (this.netAcc < interval) return;
     this.netAcc = 0;
+    this.netInFlight = true;
     const p = this.player;
     const state: KartState = {
       x: p.x, y: p.y, z: p.z, vx: p.vx, vz: p.vz, heading: p.heading,
+      pitch: p.pitch, roll: p.roll, boosting: p.boosting, drifting: p.drifting, driftDir: p.driftDir,
       aimX: p.input.aimX, aimZ: p.input.aimZ, weapon: p.weapon, ammo: p.ammo,
       alive: p.alive, hp: p.hp, score: p.score, kills: p.kills, deaths: p.deaths,
     };
@@ -1965,19 +2061,75 @@ export class Game {
       .then((r) => {
         if (r.ok) {
           this.netFails = 0;
+          this.applyRoomState(r.room ?? null);
           this.applyNet(r.players ?? [], r.events ?? []);
         } else this.netFails++;
       })
       .catch(() => {
         this.netFails++;
+      })
+      .finally(() => {
+        this.netInFlight = false;
       });
   }
 
-  private applyNet(players: { id: string; name: string; state: Record<string, unknown> }[], events: NetEvent[]) {
+  private applyRoomState(room: NetRoom | null) {
+    if (!room) return;
+    if (this.cfg.net && this.net) {
+      const isHost = room.hostId === this.net.playerId;
+      this.cfg.net.serverOffset = this.net.serverNow() - Date.now();
+      this.cfg.net.cursor = this.net.cursor;
+      if (this.cfg.net.isHost !== isHost) {
+        this.cfg.net.isHost = isHost;
+        this.cb.onNetworkHostChange?.(isHost);
+      }
+    }
+    if (room.status === "ended" && this.phase !== "ended") {
+      if (this.paused) {
+        this.paused = false;
+        this.cb.onNetworkMatchEnd?.();
+      }
+      this.endMatch();
+    }
+    if (
+      (room.status === "countdown" || room.status === "playing") &&
+      room.seed !== this.netMatchSeed &&
+      room.startAt &&
+      this.phase === "ended"
+    ) {
+      this.netMatchSeed = room.seed;
+      this.net?.clearPendingEvents();
+      if (this.netRestartTimer !== null) window.clearTimeout(this.netRestartTimer);
+      const { seed, startAt } = room;
+      this.cb.onNetworkCountdown?.(startAt);
+      this.netRestartTimer = window.setTimeout(() => {
+        this.netRestartTimer = null;
+        if (!this.disposed) this.cb.onNetworkRestart?.(seed, startAt, this.networkPlayers);
+      }, Math.max(0, room.startAt - (this.net?.serverNow() ?? Date.now())));
+    }
+  }
+
+  private applyNet(players: NetPlayer[], events: NetEvent[]) {
+    this.networkPlayers = players;
     const me = this.net?.playerId;
     for (const pl of players) {
-      if (pl.id === me) continue;
-      const k = this.karts.find((x) => x.remoteId === pl.id);
+      if (pl.id === me || pl.isAi) continue;
+      let k = this.karts.find((x) => x.remoteId === pl.id);
+      if (!k) {
+        k = this.makeKart({
+          name: pl.name,
+          avatar: pl.avatar,
+          preset: KART_PRESETS[pl.kartId % KART_PRESETS.length],
+          isPlayer: false,
+          team: this.mode === "team" ? pl.slot % 2 : -1,
+          skill: 1,
+          remoteId: pl.id,
+          spawnSlot: pl.slot,
+          glow: 0x35e8ff,
+        });
+        this.placeKart(k, pl.slot);
+        this.seedRemote(k, pl.state, pl.updatedAt);
+      }
       const st = pl.state as Partial<KartState>;
       if (!k || typeof st.x !== "number") continue;
       if (!k.alive && st.alive) {
@@ -1986,15 +2138,35 @@ export class Game {
         k.rig.group.visible = true;
         if (!k.isPlayer) k.tag.style.display = "";
         k.invuln = 1;
+      } else if (k.alive && st.alive === false) {
+        this.killKart(k, null, "Hit", true);
       }
-      k.netTarget = {
-        x: st.x ?? k.x, y: st.y ?? k.y, z: st.z ?? k.z,
-        heading: st.heading ?? k.heading, aimX: st.aimX ?? k.x, aimZ: st.aimZ ?? k.z,
+      const sample: NetKartState = {
+        x: st.x, y: st.y ?? k.y, z: st.z ?? k.z,
+        vx: st.vx ?? 0, vz: st.vz ?? 0,
+        heading: st.heading ?? k.heading, pitch: st.pitch ?? 0, roll: st.roll ?? 0,
+        boosting: st.boosting === true, drifting: st.drifting === true, driftDir: st.driftDir ?? 1,
+        aimX: st.aimX ?? k.x, aimZ: st.aimZ ?? k.z,
         weapon: (st.weapon as WeaponId) ?? null, ammo: st.ammo ?? 0,
-        alive: st.alive !== false, hp: st.hp ?? 100, seen: this.time,
+        alive: st.alive !== false, hp: st.hp ?? 100,
+        score: st.score ?? k.score, kills: st.kills ?? k.kills, deaths: st.deaths ?? k.deaths,
+        serverTime: pl.updatedAt || this.net?.serverNow() || Date.now(),
       };
+      const last = k.netSamples[k.netSamples.length - 1];
+      if (last && sample.serverTime < last.serverTime) continue;
+      if (last && sample.serverTime === last.serverTime) k.netSamples[k.netSamples.length - 1] = sample;
+      else k.netSamples.push(sample);
+      if (k.netSamples.length > 24) k.netSamples.splice(0, k.netSamples.length - 24);
+      k.hp = sample.hp;
+      k.score = sample.score;
+      k.kills = sample.kills;
+      k.deaths = sample.deaths;
     }
-    for (const ev of events) this.applyNetEvent(ev);
+    const connected = new Set(players.filter((player) => !player.isAi).map((player) => player.id));
+    for (const ev of events) {
+      if (ev.type === "leave" && connected.has(String(ev.payload?.playerId ?? ""))) continue;
+      this.applyNetEvent(ev);
+    }
   }
 
   private applyNetEvent(ev: NetEvent) {
@@ -2072,24 +2244,80 @@ export class Game {
     if (v.hp <= 0) this.killKart(v, src, weapon);
   }
 
-  /** Network-driven kart: interpolate toward the peer's reported state. */
+  /** Render a short snapshot buffer behind server time and briefly extrapolate gaps. */
   private updateRemote(k: Kart, dt: number) {
-    const n = k.netTarget;
-    if (!n) return;
-    const px = k.x;
-    const pz = k.z;
-    const a = Math.min(1, dt * 9);
-    k.x += (n.x - k.x) * a;
-    k.y += (n.y - k.y) * a;
-    k.z += (n.z - k.z) * a;
-    k.heading = lerpAngle(k.heading, n.heading, a);
-    k.vx = (k.x - px) / Math.max(dt, 0.001);
-    k.vz = (k.z - pz) / Math.max(dt, 0.001);
-    k.input.aimX = n.aimX;
-    k.input.aimZ = n.aimZ;
-    k.weapon = n.weapon;
-    k.ammo = n.ammo;
-    k.hp = n.hp;
+    const samples = k.netSamples;
+    if (!samples.length) return;
+    const targetTime = (this.net?.serverNow() ?? Date.now()) - 120;
+    while (samples.length > 2 && samples[1].serverTime <= targetTime) samples.shift();
+
+    const first = samples[0];
+    const second = samples[1];
+    let x = first.x;
+    let y = first.y;
+    let z = first.z;
+    let vx = first.vx;
+    let vz = first.vz;
+    let heading = first.heading;
+    let pitch = first.pitch;
+    let roll = first.roll;
+    let boosting = first.boosting;
+    let drifting = first.drifting;
+    let driftDir = first.driftDir;
+    let aimX = first.aimX;
+    let aimZ = first.aimZ;
+    let state = first;
+    if (second && targetTime <= second.serverTime) {
+      const span = Math.max(1, second.serverTime - first.serverTime);
+      const t = Math.max(0, Math.min(1, (targetTime - first.serverTime) / span));
+      x = first.x + (second.x - first.x) * t;
+      y = first.y + (second.y - first.y) * t;
+      z = first.z + (second.z - first.z) * t;
+      vx = first.vx + (second.vx - first.vx) * t;
+      vz = first.vz + (second.vz - first.vz) * t;
+      heading = lerpAngle(first.heading, second.heading, t);
+      pitch = first.pitch + (second.pitch - first.pitch) * t;
+      roll = first.roll + (second.roll - first.roll) * t;
+      boosting = t < 0.5 ? first.boosting : second.boosting;
+      drifting = t < 0.5 ? first.drifting : second.drifting;
+      driftDir = t < 0.5 ? first.driftDir : second.driftDir;
+      aimX = first.aimX + (second.aimX - first.aimX) * t;
+      aimZ = first.aimZ + (second.aimZ - first.aimZ) * t;
+      state = t < 0.5 ? first : second;
+    } else {
+      const latest = second ?? first;
+      const age = Math.max(0, Math.min(0.2, (targetTime - latest.serverTime) / 1_000));
+      x = latest.x + latest.vx * age;
+      y = latest.y;
+      z = latest.z + latest.vz * age;
+      vx = latest.vx;
+      vz = latest.vz;
+      heading = latest.heading;
+      pitch = latest.pitch;
+      roll = latest.roll;
+      boosting = latest.boosting;
+      drifting = latest.drifting;
+      driftDir = latest.driftDir;
+      aimX = latest.aimX;
+      aimZ = latest.aimZ;
+      state = latest;
+    }
+    k.x = x;
+    k.y = y;
+    k.z = z;
+    k.vx = vx;
+    k.vz = vz;
+    k.heading = heading;
+    k.pitch = pitch;
+    k.roll = roll;
+    k.boosting = boosting;
+    k.drifting = drifting;
+    k.driftDir = driftDir;
+    k.input.aimX = aimX;
+    k.input.aimZ = aimZ;
+    k.weapon = state.weapon;
+    k.ammo = state.ammo;
+    k.hp = state.hp;
     k.cooldown = Math.max(0, k.cooldown - dt);
   }
 
@@ -2321,15 +2549,23 @@ export class Game {
       ...this.karts.map((k) => ({ name: k.name, avatar: k.avatar, kills: k.kills, deaths: k.deaths, score: Math.round(k.score), team: k.team, isPlayer: k.isPlayer })),
       ...this.retired,
     ];
-    rows.sort((a, b) => b.score - a.score || b.kills - a.kills);
+    const compareFfa = (a: ResultRow, b: ResultRow) => b.score - a.score || b.kills - a.kills || a.deaths - b.deaths;
+    rows.sort(compareFfa);
     const p = this.player;
-    const rank = rows.findIndex((r) => r.isPlayer) + 1;
+    const playerRow = rows.find((r) => r.isPlayer);
+    const rank = playerRow ? 1 + rows.filter((r) => compareFfa(r, playerRow) < 0).length : rows.length;
+    const tiedForFirst = this.mode === "ffa" && !!playerRow && rows.some((r) => !r.isPlayer && compareFfa(r, playerRow) === 0 && compareFfa(r, rows[0]) === 0);
     let win = false;
-    if (this.mode === "ffa") win = rank === 1;
+    let draw = false;
+    if (this.mode === "ffa") {
+      draw = rank === 1 && tiedForFirst;
+      win = rank === 1 && !tiedForFirst;
+    }
     else if (this.mode === "team") win = this.teamScores[p.team as 0 | 1] > this.teamScores[(1 - p.team) as 0 | 1];
     else win = this.wave >= 5;
+    if (this.mode === "team") draw = this.teamScores[0] === this.teamScores[1];
     this.result = {
-      mode: this.mode, rows, score: Math.round(p.score), kills: p.kills, deaths: p.deaths, win, rank, teamScores: [...this.teamScores] as [number, number],
+      mode: this.mode, rows, score: Math.round(p.score), kills: p.kills, deaths: p.deaths, win, draw, rank, teamScores: [...this.teamScores] as [number, number],
       wave: this.wave, duration: this.elapsed, playerTeam: p.team,
     };
     for (const k of this.karts) {

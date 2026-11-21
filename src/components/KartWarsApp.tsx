@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { audio } from "@/game/audio";
 import { randomMapId, mapDef } from "@/game/maps";
 import { makeRoster } from "@/game/roster";
+import { RoomNet } from "@/game/net";
 import { clearScores, getServerTutorialProgressSnapshot, getTutorialProgressSnapshot, loadProfile, loadScores, loadSettings, saveProfile, saveSettings, saveTutorialProgress, subscribeTutorialProgress, type ScoreEntry } from "@/game/storage";
-import { WEAPONS, WEAPON_IDS, type GameConfig, type Mode, type Profile, type RemoteDesc, type RosterEntry, type Settings } from "@/game/types";
+import { WEAPONS, WEAPON_IDS, type GameConfig, type Mode, type NetworkSeat, type Profile, type RemoteDesc, type RosterEntry, type Settings } from "@/game/types";
 import GameView from "./GameView";
 import KartSelect from "./KartSelect";
 import Lobby from "./Lobby";
@@ -41,6 +42,7 @@ export default function KartWarsApp() {
   const ready = true;
   const [cfg, setCfg] = useState<GameConfig | null>(null);
   const [gameKey, setGameKey] = useState(0);
+  const [networkError, setNetworkError] = useState("");
   const [menuHelpOpen, setMenuHelpOpen] = useState(false);
 
   const touch = useSyncExternalStore(subscribeTouchMode, getTouchModeSnapshot, () => false);
@@ -67,12 +69,13 @@ export default function KartWarsApp() {
       mapId: string;
       roster: RosterEntry[];
       remotes?: RemoteDesc[];
-      net?: { code: string; playerId: string };
+      net?: NonNullable<GameConfig["net"]>;
       seed?: number;
       tutorial?: boolean;
       tutorialStep?: number;
     }) => {
       audio.init();
+      setNetworkError("");
       audio.setVolumes(settings.master, settings.music, settings.sfx);
       const resolved = o.mapId === "random" ? randomMapId() : mapDef(o.mapId).id;
       const seed = o.seed && o.seed > 0 ? o.seed : ((Math.random() * 0xffffffff) >>> 0) || 1;
@@ -80,7 +83,7 @@ export default function KartWarsApp() {
         mode: o.mode,
         mapId: resolved,
         seed,
-        profile: { ...profile },
+        profile: { ...profile, name: o.net?.playerName ?? profile.name },
         settings: { ...settings },
         roster: o.roster,
         remotes: o.remotes ?? [],
@@ -115,8 +118,72 @@ export default function KartWarsApp() {
     audio.setVolumes(s.master, s.music, s.sfx);
   }, []);
 
-  const restart = useCallback(() => setGameKey((k) => k + 1), []);
-  const exitGame = useCallback(() => {
+  const restart = useCallback(async (match?: { seed: number; startAt: number; players: NetworkSeat[] }) => {
+    setNetworkError("");
+    if (match) {
+      const playerId = cfg?.net?.playerId;
+      const own = match.players.find((player) => player.id === playerId);
+      const remotes: RemoteDesc[] = match.players.filter((player) => !player.isAi && player.id !== playerId).map((player) => ({
+        id: player.id,
+        name: player.name,
+        avatar: player.avatar,
+        kartId: player.kartId,
+        team: cfg?.mode === "team" ? player.slot % 2 : -1,
+        slot: player.slot,
+        state: player.state,
+        updatedAt: player.updatedAt,
+      }));
+      const roster: RosterEntry[] = match.players.filter((player) => player.isAi).map((player) => ({
+        name: player.name,
+        avatar: player.avatar,
+        kartId: player.kartId,
+        slot: player.slot,
+      }));
+      setCfg((current) => current ? {
+        ...current,
+        seed: match.seed,
+        profile: own ? { ...current.profile, name: own.name, avatar: own.avatar, kartId: own.kartId } : current.profile,
+        roster,
+        remotes,
+        net: current.net && own ? {
+          ...current.net,
+          slot: own.slot,
+          isHost: own.isHost,
+          startAt: match.startAt,
+          initialState: undefined,
+        } : current.net,
+      } : current);
+      setGameKey((k) => k + 1);
+      return;
+    }
+    if (cfg?.net) {
+      const net = new RoomNet();
+      net.code = cfg.net.code;
+      net.playerId = cfg.net.playerId;
+      net.setServerOffset(cfg.net.serverOffset);
+      try {
+        const response = await net.restart();
+        if (!response.ok) setNetworkError(response.error ?? "Could not restart the room match");
+      } catch (error) {
+        setNetworkError(error instanceof Error ? error.message : "Could not restart the room match");
+      }
+      return;
+    }
+    setGameKey((k) => k + 1);
+  }, [cfg]);
+
+  const exitGame = useCallback(async () => {
+    if (cfg?.net) {
+      const net = new RoomNet();
+      net.code = cfg.net.code;
+      net.playerId = cfg.net.playerId;
+      net.setServerOffset(cfg.net.serverOffset);
+      try {
+        await net.leave();
+      } catch (error) {
+        setNetworkError(error instanceof Error ? error.message : "Could not leave the room");
+      }
+    }
     if (cfg) setSettings((s) => ({ ...s, master: cfg.settings.master }));
     setCfg(null);
     setScores(loadScores());
@@ -126,7 +193,7 @@ export default function KartWarsApp() {
   if (screen === "game" && cfg) {
     return (
       <main className="fixed inset-0">
-        <GameView key={gameKey} cfg={cfg} onRestart={restart} onExit={exitGame} />
+        <GameView key={gameKey} cfg={cfg} onRestart={restart} onExit={exitGame} restartError={networkError} />
       </main>
     );
   }
