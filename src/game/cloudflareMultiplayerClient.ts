@@ -106,7 +106,12 @@ async function issueTicket(
 }
 
 function socketUrl(endpoint: string, code: string): string {
-  const url = new URL(endpoint);
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error("NEXT_PUBLIC_REALTIME_URL must be an absolute URL including https://, for example https://your-worker.workers.dev.");
+  }
   if (url.protocol === "https:") url.protocol = "wss:";
   else if (url.protocol === "http:") url.protocol = "ws:";
   if (url.protocol !== "ws:" && url.protocol !== "wss:") throw new Error("NEXT_PUBLIC_REALTIME_URL must use HTTP(S) or WS(S).");

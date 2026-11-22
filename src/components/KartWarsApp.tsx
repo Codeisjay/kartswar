@@ -5,8 +5,25 @@ import { audio } from "@/game/audio";
 import { randomMapId, mapDef } from "@/game/maps";
 import { makeRoster } from "@/game/roster";
 import { RoomNet } from "@/game/net";
-import { clearScores, getServerTutorialProgressSnapshot, getTutorialProgressSnapshot, loadProfile, loadScores, loadSettings, saveProfile, saveSettings, saveTutorialProgress, subscribeTutorialProgress, type ScoreEntry } from "@/game/storage";
-import { WEAPONS, WEAPON_IDS, type GameConfig, type Mode, type NetworkSeat, type Profile, type RemoteDesc, type RosterEntry, type Settings } from "@/game/types";
+import {
+  clearScores,
+  getProfileSnapshot,
+  getScoresSnapshot,
+  getServerProfileSnapshot,
+  getServerScoresSnapshot,
+  getServerSettingsSnapshot,
+  getServerTutorialProgressSnapshot,
+  getSettingsSnapshot,
+  getTutorialProgressSnapshot,
+  saveProfile,
+  saveSettings,
+  saveTutorialProgress,
+  subscribeProfile,
+  subscribeScores,
+  subscribeSettings,
+  subscribeTutorialProgress,
+} from "@/game/storage";
+import { WEAPONS, WEAPON_IDS, type GameConfig, type Mode, type NetworkSeat, type RemoteDesc, type RosterEntry, type Settings } from "@/game/types";
 import GameView from "./GameView";
 import KartSelect from "./KartSelect";
 import Lobby from "./Lobby";
@@ -39,10 +56,9 @@ const MODE_CARDS: { id: Mode; name: string; icon: string; objective: string; rul
 export default function KartWarsApp() {
   const tutorialProgress = useSyncExternalStore(subscribeTutorialProgress, getTutorialProgressSnapshot, getServerTutorialProgressSnapshot);
   const [screen, setScreen] = useState<Screen>("menu");
-  const [settings, setSettings] = useState<Settings>(loadSettings);
-  const [profile, setProfile] = useState<Profile>(loadProfile);
-  const [scores, setScores] = useState<ScoreEntry[]>(loadScores);
-  const ready = true;
+  const settings = useSyncExternalStore(subscribeSettings, getSettingsSnapshot, getServerSettingsSnapshot);
+  const profile = useSyncExternalStore(subscribeProfile, getProfileSnapshot, getServerProfileSnapshot);
+  const scores = useSyncExternalStore(subscribeScores, getScoresSnapshot, getServerScoresSnapshot);
   const [cfg, setCfg] = useState<GameConfig | null>(null);
   const [gameKey, setGameKey] = useState(0);
   const networkSessionRef = useRef<MultiplayerSession | null>(null);
@@ -53,17 +69,9 @@ export default function KartWarsApp() {
 
   const touch = useSyncExternalStore(subscribeTouchMode, getTouchModeSnapshot, () => false);
 
-  useEffect(() => {
-    if (ready) saveSettings(settings);
-  }, [settings, ready]);
-  useEffect(() => {
-    if (ready) saveProfile(profile);
-  }, [profile, ready]);
-
   const go = useCallback((s: Screen) => {
     audio.init();
     audio.sfx("click");
-    if (s === "scores" || s === "menu") setScores(loadScores());
     setScreen(s);
   }, []);
 
@@ -153,7 +161,7 @@ export default function KartWarsApp() {
   }, []);
 
   const onSettings = useCallback((s: Settings) => {
-    setSettings(s);
+    saveSettings(s);
     audio.setVolumes(s.master, s.music, s.sfx);
   }, []);
 
@@ -226,7 +234,7 @@ export default function KartWarsApp() {
         setNetworkError(error instanceof Error ? error.message : "Could not leave the room");
       }
     }
-    if (cfg) setSettings((s) => ({ ...s, master: cfg.settings.master }));
+    if (cfg) saveSettings({ ...settings, master: cfg.settings.master });
     const session = networkSessionRef.current;
     unsubscribeMatchRef.current?.();
     unsubscribeMatchRef.current = null;
@@ -234,9 +242,8 @@ export default function KartWarsApp() {
     lastNetworkMatchRef.current = null;
     if (session) void session.leave();
     setCfg(null);
-    setScores(loadScores());
     setScreen("menu");
-  }, [cfg]);
+  }, [cfg, settings]);
 
   if (screen === "game" && cfg) {
     return (
@@ -353,7 +360,7 @@ export default function KartWarsApp() {
         />
       )}
 
-      {screen === "kart" && <KartSelect profile={profile} onChange={setProfile} onBack={() => go("menu")} />}
+      {screen === "kart" && <KartSelect profile={profile} onChange={saveProfile} onBack={() => go("menu")} />}
       {screen === "settings" && <SettingsPanel settings={settings} touch={touch} onReplayTutorial={() => launchTutorial(0)} onChange={onSettings} onBack={() => go("menu")} />}
       {screen === "lobby" && (process.env.NEXT_PUBLIC_REALTIME_URL
         ? <CloudflareLobby profile={profile} onSession={onNetworkSession} onBack={() => go("menu")} />
@@ -375,7 +382,6 @@ export default function KartWarsApp() {
                   className="kw-btn ghost small"
                   onClick={() => {
                     clearScores();
-                    setScores([]);
                   }}
                 >
                   <span>Clear scores</span>
