@@ -10,6 +10,7 @@ const MODES: { id: "ffa" | "team"; label: string; icon: string }[] = [
   { id: "ffa", label: "Free For All", icon: "💥" },
   { id: "team", label: "Team Battle", icon: "🛡️" },
 ];
+const cloudflarePrivateRooms = Boolean(process.env.NEXT_PUBLIC_REALTIME_URL);
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
 interface Props {
@@ -126,7 +127,9 @@ export default function Lobby({ profile, onSession, onBack }: Props) {
       </div>
 
       <div className="mx-auto mt-3 w-full max-w-5xl rounded-lg border border-cyan-300/30 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
-        Rooms use the authoritative KARTSWAR multiplayer server. Players connect over WebSockets; no AI drivers are added to network rooms.
+        {cloudflarePrivateRooms
+          ? "Private invite rooms use Cloudflare Durable Objects over WebSockets. Quick Match still uses the existing multiplayer server during staged rollout."
+          : "Rooms use the existing authoritative KARTSWAR multiplayer server over WebSockets. No AI drivers are added to network rooms."}
       </div>
 
       <div className="mx-auto mt-4 grid w-full max-w-5xl gap-5 lg:grid-cols-[320px_1fr]">

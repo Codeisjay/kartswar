@@ -5,6 +5,9 @@ build/
 .env
 .env.*
 !.env.example
+.dev.vars
+.wrangler/
+.wrangler-dry-run/
 *.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*

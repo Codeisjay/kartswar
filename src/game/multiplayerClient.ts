@@ -4,13 +4,50 @@ import { Client, type Room } from "@colyseus/sdk";
 import { modeFromCode, randomCode } from "./roster";
 import type { Profile } from "./types";
 import type { JoinState, LobbyState, MatchStart, NetworkGameConfig, NetworkPlayer, PlayerSnapshot, SnapshotFrame } from "./networkTypes";
+import { createCloudflareRoom, joinCloudflareRoom } from "./cloudflareMultiplayerClient";
 
 const ROOM_NAME = "kart_room";
 const RESUME_KEY_PREFIX = "kartwars:resume:";
 const endpoint = process.env.NEXT_PUBLIC_MULTIPLAYER_URL || "http://localhost:2567";
+const realtimeEndpoint = process.env.NEXT_PUBLIC_REALTIME_URL;
+
+export interface MultiplayerSession {
+  readonly state: LobbyState | null;
+  readonly ownPlayerId: string;
+  readonly isConnected: boolean;
+  initialize(): Promise<LobbyState>;
+  onLobbyState(listener: (state: LobbyState) => void): () => void;
+  onMatchStart(listener: (match: MatchStart) => void): () => void;
+  onSnapshots(listener: (frame: SnapshotFrame) => void): () => void;
+  onRoomError(listener: (message: string) => void): () => void;
+  createGameConfig(match: MatchStart): NetworkGameConfig;
+  setReady(ready: boolean): void;
+  requestStart(): void;
+  requestRestart(): void;
+  finishMatch(matchId: string): void;
+  leave(): Promise<void>;
+}
 
 function getClient() {
   return new Client(endpoint);
+}
+
+function joinLegacyRoom(normalizedCode: string, profile: Profile): Promise<MultiplayerSession> {
+  const client = getClient();
+  const options = {
+    code: normalizedCode,
+    quick: false,
+    mode: modeFromCode(normalizedCode),
+    profile,
+  };
+  const resumeToken = readResumeToken(normalizedCode);
+  return client.join(ROOM_NAME, { ...options, resumeToken })
+    .catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "";
+      if (!resumeToken || !message.includes("already connected")) throw error;
+      return client.join(ROOM_NAME, options);
+    })
+    .then((room) => new LegacyMultiplayerSession(room, normalizedCode));
 }
 
 function resumeKey(code: string) {
@@ -38,37 +75,30 @@ function saveResumeToken(code: string, token: string) {
 export async function createRoom(profile: Profile, mode: "ffa" | "team"): Promise<MultiplayerSession> {
   let code = randomCode();
   while (modeFromCode(code) !== mode) code = randomCode();
+  if (realtimeEndpoint) return createCloudflareRoom(realtimeEndpoint, code, profile, mode);
   const room = await getClient().create(ROOM_NAME, { code, quick: false, mode, profile });
-  return new MultiplayerSession(room, code);
+  return new LegacyMultiplayerSession(room, code);
 }
 
 export async function joinRoom(code: string, profile: Profile): Promise<MultiplayerSession> {
   const normalizedCode = code.trim().toUpperCase();
-  const client = getClient();
-  const options = {
-    code: normalizedCode,
-    quick: false,
-    mode: modeFromCode(normalizedCode),
-    profile,
-  };
-  const resumeToken = readResumeToken(normalizedCode);
-  let room: Room;
-  try {
-    room = await client.join(ROOM_NAME, { ...options, resumeToken });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    if (!resumeToken || !message.includes("already connected")) throw error;
-    room = await client.join(ROOM_NAME, options);
+  if (realtimeEndpoint) {
+    try {
+      return await joinCloudflareRoom(realtimeEndpoint, normalizedCode, profile);
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "Room not found. Check the invitation code.") throw error;
+      return joinLegacyRoom(normalizedCode, profile);
+    }
   }
-  return new MultiplayerSession(room, normalizedCode);
+  return joinLegacyRoom(normalizedCode, profile);
 }
 
 export async function joinQuickMatch(profile: Profile, mode: "ffa" | "team"): Promise<MultiplayerSession> {
   const room = await getClient().joinOrCreate(ROOM_NAME, { code: "", quick: true, mode, profile });
-  return new MultiplayerSession(room, "");
+  return new LegacyMultiplayerSession(room, "");
 }
 
-export class MultiplayerSession {
+class LegacyMultiplayerSession implements MultiplayerSession {
   private readonly room: Room;
   private readonly lobbyListeners = new Set<(state: LobbyState) => void>();
   private readonly matchListeners = new Set<(match: MatchStart) => void>();

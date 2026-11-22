@@ -37,9 +37,8 @@ export function makeRoster(count: number, seed?: string, exclude: string[] = [])
 
 export function randomCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let c = "";
-  for (let i = 0; i < 5; i++) c += chars[Math.floor(Math.random() * chars.length)];
-  return c;
+  const bytes = crypto.getRandomValues(new Uint8Array(5));
+  return Array.from(bytes, (byte) => chars[byte % chars.length]).join("");
 }
 
 export function modeFromCode(code: string): Mode {

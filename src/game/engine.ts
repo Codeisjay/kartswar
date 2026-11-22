@@ -510,6 +510,7 @@ export class Game {
     while (samples.length > 2 && samples[1].serverTime <= renderTime) samples.shift();
 
     const first = samples[0];
+    const latest = samples[samples.length - 1];
     const next = samples.find((sample) => sample.serverTime >= renderTime);
     let x = first.x;
     let y = first.y;
@@ -534,11 +535,28 @@ export class Game {
       pitch = previous.pitch + (next.pitch - previous.pitch) * t;
       roll = previous.roll + (next.roll - previous.roll) * t;
       state = t < 0.5 ? previous : next;
-    } else if (renderTime > first.serverTime) {
-      const extrapolation = Math.min(0.2, (renderTime - first.serverTime) / 1000);
-      x += vx * extrapolation;
-      y += vy * extrapolation;
-      z += vz * extrapolation;
+    } else if (renderTime > latest.serverTime) {
+      state = latest;
+      vx = latest.vx;
+      vy = latest.vy;
+      vz = latest.vz;
+      heading = latest.heading;
+      pitch = latest.pitch;
+      roll = latest.roll;
+      const staleForMs = renderTime - latest.serverTime;
+      if (staleForMs <= 250) {
+        const extrapolation = Math.min(0.12, staleForMs / 1000);
+        x = latest.x + vx * extrapolation;
+        y = latest.y + vy * extrapolation;
+        z = latest.z + vz * extrapolation;
+      } else {
+        x = latest.x;
+        y = latest.y;
+        z = latest.z;
+        vx = 0;
+        vy = 0;
+        vz = 0;
+      }
     }
 
     this.applyNetworkSnapshot(kart, {
@@ -974,9 +992,9 @@ export class Game {
   private publishPlayerSnapshot(dt: number) {
     const network = this.cfg.network;
     if (!network || this.phase !== "playing") return;
-    this.networkSendT -= dt;
-    if (this.networkSendT > 0) return;
-    this.networkSendT = 0.05;
+    this.networkSendT += dt;
+    if (this.networkSendT < 0.05) return;
+    this.networkSendT -= 0.05;
     const player = this.player;
     network.sendSnapshot({
       x: player.x,
