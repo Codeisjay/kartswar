@@ -43,7 +43,7 @@ function Seg<T extends string | number>({ label, value, options, onChange }: { l
   );
 }
 
-export default function SettingsPanel({ settings, onChange, onBack }: { settings: Settings; onChange: (s: Settings) => void; onBack: () => void }) {
+export default function SettingsPanel({ settings, touch, onReplayTutorial, onChange, onBack }: { settings: Settings; touch: boolean; onReplayTutorial: () => void; onChange: (s: Settings) => void; onBack: () => void }) {
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => onChange({ ...settings, [k]: v });
   return (
     <div className="absolute inset-0 z-10 flex flex-col overflow-y-auto p-4 sm:p-8">
@@ -71,21 +71,35 @@ export default function SettingsPanel({ settings, onChange, onBack }: { settings
           <Toggle label="Show FPS" value={settings.showFps} onChange={(v) => set("showFps", v)} />
           <h3 className="kw-display pt-2 text-xl text-cyan-300">Controls</h3>
           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-            <b className="text-yellow-300">W A S D / Arrows</b>
-            <span>Drive &amp; steer</span>
-            <b className="text-yellow-300">Space</b>
-            <span>Drift (hold, release for mini-turbo)</span>
-            <b className="text-yellow-300">Shift</b>
-            <span>Boost</span>
-            <b className="text-yellow-300">F</b>
-            <span>Fire weapon straight ahead (hold for auto-fire)</span>
+            {touch ? (
+              <>
+                <b className="text-yellow-300">Left stick</b>
+                <span>Steer and auto-accelerate; pull down to reverse</span>
+                <b className="text-yellow-300">FIRE</b>
+                <span>Fire weapon straight ahead; turn kart to aim</span>
+                <b className="text-yellow-300">DRIFT</b>
+                <span>Hold while turning, release for mini-turbo</span>
+                <b className="text-yellow-300">BOOST</b>
+                <span>Hold to spend boost meter</span>
+              </>
+            ) : (
+              <>
+                <b className="text-yellow-300">W A S D / Arrows</b>
+                <span>Drive &amp; steer</span>
+                <b className="text-yellow-300">Space</b>
+                <span>Drift (hold, release for mini-turbo)</span>
+                <b className="text-yellow-300">Shift</b>
+                <span>Boost</span>
+                <b className="text-yellow-300">F</b>
+                <span>Fire weapon straight ahead (hold for auto-fire)</span>
+              </>
+            )}
             <b className="text-yellow-300">Esc / P</b>
             <span>Pause</span>
             <b className="text-yellow-300">R</b>
             <span>Instant restart (paused / game over)</span>
-            <b className="text-yellow-300">Touch</b>
-            <span>Left stick steers (auto-gas), right buttons fire/drift/boost</span>
           </div>
+          <button className="kw-btn cyan small w-full" onClick={onReplayTutorial}><span>↻ Replay Tutorial</span></button>
         </div>
       </div>
     </div>

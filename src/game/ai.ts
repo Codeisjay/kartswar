@@ -48,7 +48,8 @@ export function updateBot(g: Game, k: Kart, s: BotState, dt: number, active: boo
     inp.steer = 0;
     return;
   }
-  const half = g.arena.half;
+  const halfX = g.boundX();
+  const halfZ = g.boundZ();
   const spd = Math.hypot(k.vx, k.vz);
   const fx = Math.sin(k.heading);
   const fz = Math.cos(k.heading);
@@ -83,14 +84,14 @@ export function updateBot(g: Game, k: Kart, s: BotState, dt: number, active: boo
   if (lowHp || !k.weapon) {
     let bd = 75;
     for (const p of g.pickups) {
-      if (!p.active || p.spot.y > 0.1) continue;
-      if (lowHp && p.spot.kind !== "health" && k.weapon) continue;
-      if (!lowHp && p.spot.kind === "health") continue;
-      const d = Math.hypot(p.spot.x - k.x, p.spot.z - k.z);
+      if (!p.active || p.zone.y > 0.1) continue;
+      if (lowHp && p.zone.kind !== "health" && k.weapon) continue;
+      if (!lowHp && p.zone.kind === "health") continue;
+      const d = Math.hypot(p.zone.x - k.x, p.zone.z - k.z);
       if (d < bd) {
         bd = d;
-        gx = p.spot.x;
-        gz = p.spot.z;
+        gx = p.zone.x;
+        gz = p.zone.z;
         hasGoal = true;
       }
     }
@@ -121,14 +122,14 @@ export function updateBot(g: Game, k: Kart, s: BotState, dt: number, active: boo
     s.wanderT -= dt;
     if (s.wanderT <= 0 || Math.hypot(s.wx - k.x, s.wz - k.z) < 9) {
       s.wanderT = 4 + Math.random() * 4;
-      s.wx = (Math.random() - 0.5) * (half * 2 - 24);
-      s.wz = (Math.random() - 0.5) * (half * 2 - 24);
+      s.wx = (Math.random() - 0.5) * (halfX * 2 - 24);
+      s.wz = (Math.random() - 0.5) * (halfZ * 2 - 24);
     }
     gx = s.wx;
     gz = s.wz;
   }
-  gx = clamp(gx, -half + 4, half - 4);
-  gz = clamp(gz, -half + 4, half - 4);
+  gx = clamp(gx, -g.boundX() + 4, g.boundX() - 4);
+  gz = clamp(gz, -g.boundZ() + 4, g.boundZ() - 4);
 
   // ---- steering with feelers
   let desired = Math.atan2(gx - k.x, gz - k.z);

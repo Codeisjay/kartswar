@@ -9,6 +9,8 @@ export interface Surface {
   h: number;
   /** -1 flat, 0 rises toward +x, 1 toward -x, 2 toward +z, 3 toward -z */
   dir: number;
+  /** designed drivable platform (reachability is validated by the map audit) */
+  nav?: boolean;
 }
 
 export type CircleKind = "static" | "crate" | "barrel" | "cone";
@@ -38,12 +40,37 @@ export interface SpawnPoint {
   heading: number;
 }
 
+/** A candidate weapon/health spawn location. Engine picks a random subset each match. */
+export interface PickupZone {
+  x: number;
+  z: number;
+  y: number;
+  kind: "weapon" | "health";
+}
+/** Environmental danger area (e.g. lava). Karts inside take damage per second. */
+export interface Hazard {
+  x: number;
+  z: number;
+  r: number;
+  dps: number;
+}
 export interface Arena {
   half: number;
+  /** Half-extents of the playable rectangle (defaults to half x half). */
+  hx: number;
+  hz: number;
   surfaces: Surface[];
   circles: Circle[];
   pickupSpots: PickupSpot[];
   spawns: SpawnPoint[];
+  /** Optional candidate pickup zones for the randomized pickup system. */
+  zones?: PickupZone[];
+  /** Optional environmental hazards (damage areas). */
+  hazards?: Hazard[];
+  /** Declared driving lanes (kept clear of obstacles, used by map audit). */
+  lanes?: { x0: number; x1: number; z0: number; z1: number }[];
+  /** Optional cleanup for map-owned dynamic resources. */
+  dispose?(): void;
   groundAt(x: number, z: number, yRef: number): number;
   maxHeightAt(x: number, z: number): number;
   update(t: number, dt: number): void;
@@ -321,7 +348,7 @@ export function buildArena(scene: THREE.Scene, quality: "low" | "medium" | "high
   };
 
   const block = (x0: number, x1: number, z0: number, z1: number, h: number, style: "platform" | "bench" | "cover") => {
-    addSurface({ x0, x1, z0, z1, h, dir: -1 });
+    addSurface({ x0, x1, z0, z1, h, dir: -1, nav: style === "platform" });
     const w = x1 - x0;
     const d = z1 - z0;
     const cx = (x0 + x1) / 2;
@@ -493,10 +520,24 @@ export function buildArena(scene: THREE.Scene, quality: "low" | "medium" | "high
   pickupSpots.push({ x: 50, z: 0, y: 0, kind: "health" }, { x: -50, z: 0, y: 0, kind: "health" }, { x: 0, z: 40, y: 0, kind: "health" }, { x: 0, z: -40, y: 0, kind: "health" });
 
   // ---------- destructibles & props ----------
+  // driving lanes kept clear of obstacles (approach roads + corner routes)
+  const lanes = [
+    { x0: -7, x1: 7, z0: 24, z1: 66 },
+    { x0: -7, x1: 7, z0: -66, z1: -24 },
+    { x0: 24, x1: 66, z0: -7, z1: 7 },
+    { x0: -66, x1: -24, z0: -7, z1: 7 },
+    { x0: -58, x1: -32, z0: -58, z1: -32 },
+    { x0: 32, x1: 58, z0: 32, z1: 58 },
+    { x0: -58, x1: -32, z0: 32, z1: 58 },
+    { x0: 32, x1: 58, z0: -58, z1: -32 },
+  ];
   const free = (x: number, z: number, margin: number) => {
     if (Math.abs(x) > half - 4 || Math.abs(z) > half - 4) return false;
+    for (const l of lanes) {
+      if (x > l.x0 - margin - 1.2 && x < l.x1 + margin + 1.2 && z > l.z0 - margin - 1.2 && z < l.z1 + margin + 1.2) return false;
+    }
     for (const s of surfaces) if (x > s.x0 - margin - 1 && x < s.x1 + margin + 1 && z > s.z0 - margin - 1 && z < s.z1 + margin + 1) return false;
-    for (const c of circles) if (Math.hypot(c.x - x, c.z - z) < c.r + margin + 1.2) return false;
+    for (const c of circles) if (Math.hypot(c.x - x, c.z - z) < c.r + margin + 2.6) return false;
     for (const p of spawns) if (Math.hypot(p.x - x, p.z - z) < 8.5) return false;
     for (const p of pickupSpots) if (Math.hypot(p.x - x, p.z - z) < 5) return false;
     return true;
@@ -645,15 +686,15 @@ export function buildArena(scene: THREE.Scene, quality: "low" | "medium" | "high
     }
   };
 
-  return { half, surfaces, circles, pickupSpots, spawns, groundAt, maxHeightAt, update };
+  return { half, hx: half, hz: half, surfaces, circles, pickupSpots, spawns, lanes, groundAt, maxHeightAt, update };
 }
 
-export function createPickupMesh(kind: "weapon" | "health"): THREE.Group {
+export function createPickupMesh(kind: "weapon" | "health", accent?: number): THREE.Group {
   const g = new THREE.Group();
   const isW = kind === "weapon";
   const bodyMat = new THREE.MeshStandardMaterial({ color: isW ? 0x0f4a63 : 0x1b7a3a, roughness: 0.35, metalness: 0.6, flatShading: true, emissive: isW ? 0x06202c : 0x082a12 });
   const gold = new THREE.MeshStandardMaterial({ color: 0xf0b429, metalness: 0.8, roughness: 0.3, flatShading: true });
-  const glowCol = isW ? 0x35e8ff : 0x6dff6d;
+  const glowCol = accent ?? (isW ? 0x35e8ff : 0x6dff6d);
   const glow = new THREE.MeshBasicMaterial({ color: glowCol });
   const inner = new THREE.Group();
   inner.name = "spin";

@@ -99,15 +99,59 @@ export interface RosterEntry {
   name: string;
   avatar: string;
   kartId: number;
+  slot?: number;
+}
+
+export interface NetworkSeat {
+  id: string;
+  name: string;
+  avatar: string;
+  kartId: number;
+  isHost: boolean;
+  isAi: boolean;
+  ready: boolean;
+  slot: number;
+  updatedAt: number;
+  state: Record<string, unknown>;
 }
 
 export interface GameConfig {
   mode: Mode;
+  mapId: string;
+  /** Optional match seed for reproducible randomization (debugging). Defaults to random. */
+  seed: number;
   profile: Profile;
   settings: Settings;
   roster: RosterEntry[];
   touch: boolean;
   network?: NetworkGameConfig;
+  tutorial?: boolean;
+  tutorialStep?: number;
+  /** A real player connected over a room (multiplayer). */
+  net?: {
+    code: string;
+    playerId: string;
+    playerName: string;
+    slot: number;
+    isHost: boolean;
+    startAt: number | null;
+    serverOffset: number;
+    cursor: number;
+    initialState?: Record<string, unknown>;
+  };
+  /** Human opponents driven by the network instead of AI. */
+  remotes?: RemoteDesc[];
+}
+
+export interface RemoteDesc {
+  id: string;
+  name: string;
+  avatar: string;
+  kartId: number;
+  team: number;
+  slot: number;
+  state?: Record<string, unknown>;
+  updatedAt?: number;
 }
 
 export interface HudWeapon {
@@ -200,6 +244,32 @@ export interface GameCallbacks {
   onKill: (k: KillEntry) => void;
   onEvent: (e: GameEvent) => void;
   onEnd: (r: MatchResult) => void;
+  onNetworkMatchEnd?: () => void;
+  onNetworkHostChange?: (isHost: boolean) => void;
+  onNetworkCountdown?: (startAt: number) => void;
+  onNetworkRestart?: (seed: number, startAt: number, players: NetworkSeat[]) => void;
+  onTutorialState?: (state: TutorialState) => void;
+}
+
+export interface TutorialState {
+  throttle: number;
+  steer: number;
+  speed: number;
+  steeredLeft: boolean;
+  steeredRight: boolean;
+  reversed: boolean;
+  boosting: boolean;
+  distance: number;
+  fireCount: number;
+  pickupCount: number;
+  targetHits: number;
+  targetInRange: boolean;
+  targetBearing: number | null;
+  weapon: WeaponId | null;
+  ammo: number;
+  shield: number;
+  pickupBearing: number | null;
+  pickupDistance: number | null;
 }
 
 export interface TouchInput {

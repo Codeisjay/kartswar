@@ -46,6 +46,11 @@ export function modeFromCode(code: string): Mode {
   return m === 0 ? "ffa" : m === 1 ? "team" : "ffa";
 }
 
+export function mapFromCode(code: string): string {
+  const ids = ["neon", "city", "volcano", "jungle"];
+  return ids[hashString("map:" + code) % ids.length];
+}
+
 /**
  * Networking seam. The game simulation consumes an `Input` per kart and produces plain-data state,
  * so a real transport (WebSocket / WebRTC) can implement this interface and replace the AI drivers.

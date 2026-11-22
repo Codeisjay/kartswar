@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import type { TouchInput } from "@/game/types";
 
 interface Props {
@@ -12,8 +12,6 @@ export default function TouchControls({ onChange }: Props) {
   const [knob, setKnob] = useState({ x: 0, y: 0 });
   const stickId = useRef<number | null>(null);
   const baseRef = useRef<HTMLDivElement>(null);
-
-  const push = useCallback(() => onChange({ ...state.current }), [onChange]);
 
   const moveStick = (e: React.PointerEvent) => {
     const el = baseRef.current;
@@ -32,7 +30,7 @@ export default function TouchControls({ onChange }: Props) {
     setKnob({ x: dx, y: dy });
     state.current.steer = Math.max(-1, Math.min(1, dx / (max * 0.8)));
     state.current.throttle = dy > max * 0.5 ? -1 : 1; // auto-gas, pull back to brake/reverse
-    push();
+    onChange({ ...state.current });
   };
 
   const stickDown = (e: React.PointerEvent) => {
@@ -50,25 +48,8 @@ export default function TouchControls({ onChange }: Props) {
     setKnob({ x: 0, y: 0 });
     state.current.steer = 0;
     state.current.throttle = 1;
-    push();
+    onChange({ ...state.current });
   };
-
-  const btn = (key: "fire" | "drift" | "boost") => ({
-    onPointerDown: (e: React.PointerEvent) => {
-      e.preventDefault();
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      state.current[key] = true;
-      push();
-    },
-    onPointerUp: () => {
-      state.current[key] = false;
-      push();
-    },
-    onPointerCancel: () => {
-      state.current[key] = false;
-      push();
-    },
-  });
 
   return (
     <div data-ui className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end justify-between p-4 pb-6" style={{ touchAction: "none" }}>
@@ -85,13 +66,64 @@ export default function TouchControls({ onChange }: Props) {
         <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] font-bold tracking-widest text-cyan-200/70">STEER</div>
       </div>
       <div className="pointer-events-auto relative h-44 w-52" style={{ touchAction: "none" }}>
-        <button {...btn("fire")} className="kw-display absolute bottom-0 right-0 h-24 w-24 rounded-full border-4 border-red-200/70 bg-red-500/70 text-lg text-white shadow-[0_0_28px_rgba(255,50,70,0.7)] active:scale-95" style={{ touchAction: "none" }}>
+        <button
+          onPointerDown={(e) => {
+            e.preventDefault();
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            state.current.fire = true;
+            onChange({ ...state.current });
+          }}
+          onPointerUp={() => {
+            state.current.fire = false;
+            onChange({ ...state.current });
+          }}
+          onPointerCancel={() => {
+            state.current.fire = false;
+            onChange({ ...state.current });
+          }}
+          className="kw-display absolute bottom-0 right-0 h-24 w-24 rounded-full border-4 border-red-200/70 bg-red-500/70 text-lg text-white shadow-[0_0_28px_rgba(255,50,70,0.7)] active:scale-95"
+          style={{ touchAction: "none" }}
+        >
           FIRE
         </button>
-        <button {...btn("drift")} className="kw-display absolute bottom-2 right-28 h-16 w-16 rounded-full border-2 border-yellow-200/70 bg-yellow-400/40 text-xs text-white active:scale-95" style={{ touchAction: "none" }}>
+        <button
+          onPointerDown={(e) => {
+            e.preventDefault();
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            state.current.drift = true;
+            onChange({ ...state.current });
+          }}
+          onPointerUp={() => {
+            state.current.drift = false;
+            onChange({ ...state.current });
+          }}
+          onPointerCancel={() => {
+            state.current.drift = false;
+            onChange({ ...state.current });
+          }}
+          className="kw-display absolute bottom-2 right-28 h-16 w-16 rounded-full border-2 border-yellow-200/70 bg-yellow-400/40 text-xs text-white active:scale-95"
+          style={{ touchAction: "none" }}
+        >
           DRIFT
         </button>
-        <button {...btn("boost")} className="kw-display absolute bottom-24 right-8 h-16 w-16 rounded-full border-2 border-green-200/70 bg-green-400/40 text-xs text-white active:scale-95" style={{ touchAction: "none" }}>
+        <button
+          onPointerDown={(e) => {
+            e.preventDefault();
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            state.current.boost = true;
+            onChange({ ...state.current });
+          }}
+          onPointerUp={() => {
+            state.current.boost = false;
+            onChange({ ...state.current });
+          }}
+          onPointerCancel={() => {
+            state.current.boost = false;
+            onChange({ ...state.current });
+          }}
+          className="kw-display absolute bottom-24 right-8 h-16 w-16 rounded-full border-2 border-green-200/70 bg-green-400/40 text-xs text-white active:scale-95"
+          style={{ touchAction: "none" }}
+        >
           BOOST
         </button>
       </div>
