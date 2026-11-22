@@ -5,6 +5,7 @@ interface Env {
   ROOMS: DurableObjectNamespace;
   KARTSWAR_REALTIME_AUTH_SECRET: string;
   KARTSWAR_ALLOWED_ORIGINS?: string;
+  KARTSWAR_NETWORK_DIAGNOSTICS?: string;
 }
 
 type RoomMode = "ffa" | "team";
@@ -42,6 +43,11 @@ interface Snapshot {
   state: SnapshotState;
 }
 
+interface SnapshotRateLimitBucket {
+  tokens: number;
+  updatedAt: number;
+}
+
 interface PersistedRoom {
   code: string;
   mode: RoomMode;
@@ -65,7 +71,8 @@ interface SocketAttachment {
 const CAPACITY = 8;
 const COUNTDOWN_MS = 3500;
 const HEARTBEAT_TIMEOUT_MS = 30_000;
-const SNAPSHOT_INTERVAL_MS = 40;
+const SNAPSHOT_RATE_LIMIT_PER_SECOND = 25;
+const SNAPSHOT_RATE_LIMIT_BURST = 2;
 const SNAPSHOT_KEYS = [
   "x", "y", "z", "vx", "vy", "vz", "heading", "pitch", "roll", "boosting", "drifting",
   "driftLevel", "grounded", "alive", "hp", "weapon", "ammo", "firing", "aimX", "aimZ",
@@ -140,8 +147,9 @@ async function verifyTicket(ticket: unknown, secret: string): Promise<TicketClai
 }
 
 function safeSend(socket: WebSocket, message: unknown) {
-  if (socket.readyState !== WebSocket.OPEN) return;
+  if (socket.readyState !== WebSocket.OPEN) return false;
   socket.send(JSON.stringify(message));
+  return true;
 }
 
 function cleanName(value: string, members: Iterable<Member>) {
@@ -176,8 +184,38 @@ function completeSnapshot(state: SnapshotState) {
     && (state.weapon === null || typeof state.weapon === "string");
 }
 
+export function consumeSnapshotRateLimitToken(
+  bucket: SnapshotRateLimitBucket | undefined,
+  now: number,
+) {
+  const updatedAt = bucket?.updatedAt ?? now;
+  const tokens = Math.min(
+    SNAPSHOT_RATE_LIMIT_BURST,
+    (bucket?.tokens ?? SNAPSHOT_RATE_LIMIT_BURST)
+      + Math.max(0, now - updatedAt) * SNAPSHOT_RATE_LIMIT_PER_SECOND / 1000,
+  );
+  const allowed = tokens >= 1;
+  return {
+    allowed,
+    bucket: {
+      tokens: allowed ? tokens - 1 : tokens,
+      updatedAt: Math.max(now, updatedAt),
+    },
+  };
+}
+
 export async function handleWorkerFetch(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
+  const metricsMatch = url.pathname.match(/^\/__debug\/metrics\/([A-Z0-9]{5})$/);
+  if (metricsMatch) {
+    if (
+      request.method !== "GET"
+      || env.KARTSWAR_NETWORK_DIAGNOSTICS !== "true"
+      || !["localhost", "127.0.0.1"].includes(url.hostname)
+    ) return jsonResponse({ error: "Not found." }, 404);
+    const id = env.ROOMS.idFromName(metricsMatch[1]);
+    return env.ROOMS.get(id).fetch(new Request("https://room.internal/__debug/metrics"));
+  }
   if (url.pathname === "/health") {
     return jsonResponse({
       ok: true,
@@ -225,7 +263,16 @@ export class KartRoom {
   private readonly members = new Map<string, Member>();
   private readonly snapshots = new Map<string, Snapshot>();
   private readonly lastSequence = new Map<string, number>();
-  private readonly lastStateAt = new Map<string, number>();
+  private readonly snapshotRateLimits = new Map<string, SnapshotRateLimitBucket>();
+  private readonly snapshotMetricEvents: {
+    at: number;
+    accepted: boolean;
+    validatedDelta: boolean;
+    broadcastAttempts: number;
+    relayedFrames: number;
+    rejected: "sequence" | "rate-limit" | "invalid" | "inactive" | null;
+  }[] = [];
+  private snapshotMetricsStartedAt = Date.now();
 
   constructor(private readonly state: DurableObjectState, private readonly env: Env) {
     this.ready = state.blockConcurrencyWhile(async () => {
@@ -262,7 +309,12 @@ export class KartRoom {
 
   async fetch(request: Request): Promise<Response> {
     await this.ready;
-    const code = new URL(request.url).pathname.split("/").pop() ?? "";
+    const url = new URL(request.url);
+    if (url.pathname === "/__debug/metrics") {
+      if (this.env.KARTSWAR_NETWORK_DIAGNOSTICS !== "true") return jsonResponse({ error: "Not found." }, 404);
+      return jsonResponse(this.networkMetrics());
+    }
+    const code = url.pathname.split("/").pop() ?? "";
     if (!/^[A-Z0-9]{5}$/.test(code)) return jsonResponse({ error: "Invalid room code." }, 400);
     if (this.code && this.code !== code) return jsonResponse({ error: "Room identity mismatch." }, 409);
     this.code = code;
@@ -376,6 +428,8 @@ export class KartRoom {
     }
     if (this.phase === "countdown" && this.startAt !== null && now >= this.startAt) {
       this.phase = "playing";
+      this.snapshotMetricEvents.length = 0;
+      this.snapshotMetricsStartedAt = now;
       await this.persist();
       this.publishLobby();
     }
@@ -468,7 +522,6 @@ export class KartRoom {
     member.disconnectedAt = undefined;
     if (isResume) member.ready = true;
     member.host = member.playerId === this.hostPlayerId;
-    this.lastStateAt.delete(member.playerId);
     if (member.lastSnapshot) {
       this.snapshots.set(member.playerId, member.lastSnapshot);
       this.lastSequence.set(member.playerId, member.lastSnapshot.sequence);
@@ -500,16 +553,72 @@ export class KartRoom {
   }
 
   private receiveSnapshot(socket: WebSocket, player: Member, message: Record<string, unknown>) {
-    if (this.phase !== "playing" || !validateDelta(message.d) || !Number.isSafeInteger(message.q)) return;
-    const sequence = message.q as number;
-    if (sequence <= (this.lastSequence.get(player.playerId) ?? 0)) return;
     const now = Date.now();
-    if (now - (this.lastStateAt.get(player.playerId) ?? 0) < SNAPSHOT_INTERVAL_MS) return;
+    if (this.phase !== "playing") {
+      this.recordSnapshotMetric({
+        at: now,
+        accepted: false,
+        validatedDelta: false,
+        broadcastAttempts: 0,
+        relayedFrames: 0,
+        rejected: "inactive",
+      });
+      return;
+    }
+    const validatedDelta = validateDelta(message.d);
+    if (!validatedDelta || !Number.isSafeInteger(message.q)) {
+      this.recordSnapshotMetric({
+        at: now,
+        accepted: false,
+        validatedDelta,
+        broadcastAttempts: 0,
+        relayedFrames: 0,
+        rejected: "invalid",
+      });
+      return;
+    }
+    const sequence = message.q as number;
+    if (sequence <= (this.lastSequence.get(player.playerId) ?? 0)) {
+      this.recordSnapshotMetric({
+        at: now,
+        accepted: false,
+        validatedDelta,
+        broadcastAttempts: 0,
+        relayedFrames: 0,
+        rejected: "sequence",
+      });
+      return;
+    }
+    const rateLimit = consumeSnapshotRateLimitToken(
+      this.snapshotRateLimits.get(player.playerId),
+      now,
+    );
+    this.snapshotRateLimits.set(player.playerId, rateLimit.bucket);
+    if (!rateLimit.allowed) {
+      this.recordSnapshotMetric({
+        at: now,
+        accepted: false,
+        validatedDelta,
+        broadcastAttempts: 0,
+        relayedFrames: 0,
+        rejected: "rate-limit",
+      });
+      return;
+    }
     const previous = this.snapshots.get(player.playerId)?.state ?? {};
     const state = { ...previous, ...(message.d as SnapshotState) };
-    if (!completeSnapshot(state)) return;
+    if (!completeSnapshot(state)) {
+      this.recordSnapshotMetric({
+        at: now,
+        accepted: false,
+        validatedDelta,
+        broadcastAttempts: 0,
+        relayedFrames: 0,
+        rejected: "invalid",
+      });
+      return;
+    }
     this.lastSequence.set(player.playerId, sequence);
-    this.lastStateAt.set(player.playerId, now);
     const attachment = this.attachment(socket);
     if (attachment) {
       attachment.lastSeenAt = now;
@@ -522,7 +631,16 @@ export class KartRoom {
       socket.serializeAttachment(attachment);
     }
     const delta = message.d as SnapshotState;
-    this.broadcast({ t: "s", p: player.playerId, q: sequence, ts: now, d: delta }, socket);
+    const broadcastAttempts = this.state.getWebSockets().filter((candidate) => candidate !== socket).length;
+    const relayedFrames = this.broadcast({ t: "s", p: player.playerId, q: sequence, ts: now, d: delta }, socket);
+    this.recordSnapshotMetric({
+      at: now,
+      accepted: true,
+      validatedDelta,
+      broadcastAttempts,
+      relayedFrames,
+      rejected: null,
+    });
   }
 
   private async beginCountdown(restart: boolean) {
@@ -598,7 +716,46 @@ export class KartRoom {
   }
 
   private broadcast(message: unknown, exclude?: WebSocket) {
-    for (const socket of this.state.getWebSockets()) if (socket !== exclude) safeSend(socket, message);
+    let relayed = 0;
+    for (const socket of this.state.getWebSockets()) {
+      if (socket !== exclude && safeSend(socket, message)) relayed += 1;
+    }
+    return relayed;
+  }
+
+  private recordSnapshotMetric(event: (typeof this.snapshotMetricEvents)[number]) {
+    this.snapshotMetricEvents.push(event);
+    const cutoff = event.at - 10_000;
+    while (this.snapshotMetricEvents.length && this.snapshotMetricEvents[0].at < cutoff) {
+      this.snapshotMetricEvents.shift();
+    }
+    if (this.snapshotMetricEvents.length > 4_096) this.snapshotMetricEvents.shift();
+  }
+
+  private networkMetrics() {
+    const now = Date.now();
+    const cutoff = now - 10_000;
+    while (this.snapshotMetricEvents.length && this.snapshotMetricEvents[0].at < cutoff) {
+      this.snapshotMetricEvents.shift();
+    }
+    const windowMs = Math.max(1, Math.min(10_000, now - this.snapshotMetricsStartedAt));
+    const received = this.snapshotMetricEvents.length;
+    const validated = this.snapshotMetricEvents.filter((event) => event.validatedDelta).length;
+    const accepted = this.snapshotMetricEvents.filter((event) => event.accepted);
+    const broadcastAttempts = accepted.reduce((sum, event) => sum + event.broadcastAttempts, 0);
+    const relayedFrames = accepted.reduce((sum, event) => sum + event.relayedFrames, 0);
+    return {
+      windowMs,
+      receivedSnapshotMessagesPerSecond: received * 1_000 / windowMs,
+      validatedSnapshotDeltasPerSecond: validated * 1_000 / windowMs,
+      acceptedSnapshotsPerSecond: accepted.length * 1_000 / windowMs,
+      serverBroadcastAttemptsPerSecond: broadcastAttempts * 1_000 / windowMs,
+      serverRelayedFramesPerSecond: relayedFrames * 1_000 / windowMs,
+      rateLimitedSnapshots: this.snapshotMetricEvents.filter((event) => event.rejected === "rate-limit").length,
+      rejectedSequences: this.snapshotMetricEvents.filter((event) => event.rejected === "sequence").length,
+      invalidSnapshots: this.snapshotMetricEvents.filter((event) => event.rejected === "invalid").length,
+      inactiveSnapshots: this.snapshotMetricEvents.filter((event) => event.rejected === "inactive").length,
+    };
   }
 
   private sendToPlayer(playerId: string, message: unknown) {
@@ -638,7 +795,7 @@ export class KartRoom {
     this.members.delete(member.playerId);
     this.snapshots.delete(member.playerId);
     this.lastSequence.delete(member.playerId);
-    this.lastStateAt.delete(member.playerId);
+    this.snapshotRateLimits.delete(member.playerId);
     if (this.hostPlayerId === member.playerId) this.electHost();
     if (this.phase === "countdown") {
       this.phase = "lobby";

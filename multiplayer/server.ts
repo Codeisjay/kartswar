@@ -65,6 +65,11 @@ export class KartRoom extends Room {
   private startAt: number | null = null;
   private countdownTimer: ReturnType<typeof setTimeout> | null = null;
   private matchStartBroadcast = false;
+  private readonly snapshotMessageTimes: number[] = [];
+  private readonly snapshotReceiveTimes: number[] = [];
+  private readonly snapshotRelaySamples: { at: number; frames: number }[] = [];
+  private readonly rejectedSnapshotTimes: number[] = [];
+  private snapshotMetricsStartedAt = performance.now();
 
   onCreate(options: JoinOptions) {
     const quick = options.quick === true;
@@ -84,6 +89,11 @@ export class KartRoom extends Room {
     this.onMessage("match-ended", (client, payload: { matchId?: unknown }) => this.endMatch(client, payload));
     this.onMessage("player-state", (client, payload: { sequence?: unknown; state?: unknown }) => this.receivePlayerState(client, payload));
     this.onMessage("server-time", () => ({ serverTime: Date.now() }));
+    this.onMessage("network-metrics", () => {
+      return process.env.KARTSWAR_NETWORK_DIAGNOSTICS === "true"
+        ? { enabled: true, ...this.networkMetrics() }
+        : { enabled: false };
+    });
     this.setTimestep(() => this.broadcastSnapshots(), 50);
   }
 
@@ -263,6 +273,7 @@ export class KartRoom extends Room {
       if (this.phase !== "countdown" || this.matchId !== expectedMatchId || !this.matchStartBroadcast) return;
       this.phase = "playing";
       this.countdownTimer = null;
+      this.resetNetworkMetrics();
       this.publishLobby();
     }, COUNTDOWN_MS);
   }
@@ -284,21 +295,69 @@ export class KartRoom extends Room {
   }
 
   private receivePlayerState(client: Client, payload: { sequence?: unknown; state?: unknown }) {
+    const diagnosticsEnabled = process.env.KARTSWAR_NETWORK_DIAGNOSTICS === "true";
+    const receivedAt = performance.now();
+    if (diagnosticsEnabled) this.snapshotMessageTimes.push(receivedAt);
     const player = this.memberFor(client);
-    if (this.phase !== "playing" || !player || !player.connected || typeof payload.sequence !== "number" || !Number.isSafeInteger(payload.sequence) || payload.sequence <= player.lastSequence || !validSnapshot(payload.state)) return;
+    if (this.phase !== "playing" || !player || !player.connected || typeof payload.sequence !== "number" || !Number.isSafeInteger(payload.sequence) || payload.sequence <= player.lastSequence || !validSnapshot(payload.state)) {
+      if (diagnosticsEnabled) this.rejectedSnapshotTimes.push(receivedAt);
+      return;
+    }
     player.lastSequence = payload.sequence;
     player.snapshot = payload.state;
+    if (diagnosticsEnabled) this.snapshotReceiveTimes.push(receivedAt);
   }
 
   private broadcastSnapshots() {
     if (this.phase !== "playing" || !this.matchId) return;
+    const now = performance.now();
     const frame: SnapshotFrame = {
       serverTime: Date.now(),
       players: [...this.members.values()]
         .filter((player) => player.connected && player.snapshot)
         .map((player) => ({ ...player.snapshot!, playerId: player.playerId, sequence: player.lastSequence })),
     };
-    if (frame.players.length) this.broadcast("snapshots", frame);
+    if (frame.players.length) {
+      this.broadcast("snapshots", frame);
+      if (process.env.KARTSWAR_NETWORK_DIAGNOSTICS === "true") {
+        const recipients = [...this.members.values()].filter((player) => player.connected).length;
+        this.snapshotRelaySamples.push({ at: now, frames: recipients });
+        this.pruneNetworkMetrics(now);
+      }
+    }
+  }
+
+  private resetNetworkMetrics() {
+    this.snapshotMessageTimes.length = 0;
+    this.snapshotReceiveTimes.length = 0;
+    this.snapshotRelaySamples.length = 0;
+    this.rejectedSnapshotTimes.length = 0;
+    this.snapshotMetricsStartedAt = performance.now();
+  }
+
+  private pruneNetworkMetrics(now: number) {
+    const cutoff = now - 10_000;
+    while (this.snapshotMessageTimes.length && this.snapshotMessageTimes[0] < cutoff) this.snapshotMessageTimes.shift();
+    while (this.snapshotReceiveTimes.length && this.snapshotReceiveTimes[0] < cutoff) this.snapshotReceiveTimes.shift();
+    while (this.snapshotRelaySamples.length && this.snapshotRelaySamples[0].at < cutoff) this.snapshotRelaySamples.shift();
+    while (this.rejectedSnapshotTimes.length && this.rejectedSnapshotTimes[0] < cutoff) this.rejectedSnapshotTimes.shift();
+  }
+
+  private networkMetrics() {
+    const now = performance.now();
+    this.pruneNetworkMetrics(now);
+    const windowMs = Math.max(1, Math.min(10_000, now - this.snapshotMetricsStartedAt));
+    const relayFrames = this.snapshotRelaySamples.reduce((sum, sample) => sum + sample.frames, 0);
+    return {
+      windowMs,
+      receivedSnapshotMessagesPerSecond: this.snapshotMessageTimes.length * 1_000 / windowMs,
+      validatedSnapshotMessagesPerSecond: this.snapshotReceiveTimes.length * 1_000 / windowMs,
+      acceptedSnapshotsPerSecond: this.snapshotReceiveTimes.length * 1_000 / windowMs,
+      serverBroadcastAttemptsPerSecond: relayFrames * 1_000 / windowMs,
+      relayTicksPerSecond: this.snapshotRelaySamples.length * 1_000 / windowMs,
+      relayedFramesPerSecond: relayFrames * 1_000 / windowMs,
+      rejectedSnapshots: this.rejectedSnapshotTimes.length,
+    };
   }
 
   private lobbyState(): LobbyState {

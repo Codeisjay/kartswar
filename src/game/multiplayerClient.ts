@@ -3,7 +3,16 @@
 import { Client, type Room } from "@colyseus/sdk";
 import { modeFromCode, randomCode } from "./roster";
 import type { Profile } from "./types";
-import type { JoinState, LobbyState, MatchStart, NetworkGameConfig, NetworkPlayer, PlayerSnapshot, SnapshotFrame } from "./networkTypes";
+import type {
+  JoinState,
+  LobbyState,
+  MatchStart,
+  NetworkGameConfig,
+  NetworkPlayer,
+  PlayerSnapshot,
+  SnapshotFrame,
+  SnapshotServerMetrics,
+} from "./networkTypes";
 import { createCloudflareRoom, joinCloudflareRoom } from "./cloudflareMultiplayerClient";
 
 const ROOM_NAME = "kart_room";
@@ -104,6 +113,7 @@ class LegacyMultiplayerSession implements MultiplayerSession {
   private readonly matchListeners = new Set<(match: MatchStart) => void>();
   private readonly snapshotListeners = new Set<(frame: SnapshotFrame) => void>();
   private readonly errorListeners = new Set<(message: string) => void>();
+  private readonly connectionListeners = new Set<(connected: boolean) => void>();
   private readonly snapshotHistory: SnapshotFrame[] = [];
   private lobby: LobbyState | null = null;
   private lastMatch: MatchStart | null = null;
@@ -123,16 +133,16 @@ class LegacyMultiplayerSession implements MultiplayerSession {
       this.emitError(message.message || "The room rejected that request.");
     });
     this.room.onDrop(() => {
-      this.connected = false;
+      this.setConnected(false);
       this.emitError("Connection interrupted. Reconnecting…");
     });
     this.room.onReconnect(() => {
-      this.connected = true;
+      this.setConnected(true);
       this.emitError("");
     });
     this.room.onLeave((code, reason) => {
       if (!this.intentionalLeave) {
-        this.connected = false;
+        this.setConnected(false);
         this.emitError(reason || `Disconnected from the room (code ${code}).`);
       }
     });
@@ -200,6 +210,12 @@ class LegacyMultiplayerSession implements MultiplayerSession {
     return () => this.errorListeners.delete(listener);
   }
 
+  onConnectionChange(listener: (connected: boolean) => void): () => void {
+    this.connectionListeners.add(listener);
+    listener(this.connected);
+    return () => this.connectionListeners.delete(listener);
+  }
+
   createGameConfig(match: MatchStart): NetworkGameConfig {
     return {
       playerId: this.playerId,
@@ -213,7 +229,15 @@ class LegacyMultiplayerSession implements MultiplayerSession {
       serverNow: () => this.serverNow(),
       canControlMatch: () => this.lobby?.hostPlayerId === this.playerId,
       finishMatch: (matchId) => this.finishMatch(matchId),
+      isConnected: () => this.connected,
+      onConnectionChange: (listener) => this.onConnectionChange(listener),
+      getCloudflareSnapshotPipelineStats: () => null,
+      getSnapshotServerMetrics: async () => {
+        const metrics = await this.room.request<Record<string, never>, SnapshotServerMetrics>("network-metrics", {});
+        return metrics.enabled ? metrics : null;
+      },
       sendSnapshot: (snapshot) => this.sendSnapshot(snapshot),
+      getTransportStaleSnapshotCount: () => 0,
       onSnapshots: (listener) => this.onSnapshots(listener),
       onPlayersChange: (listener) => this.onLobbyState((state) => listener(state.players)),
     };
@@ -237,7 +261,7 @@ class LegacyMultiplayerSession implements MultiplayerSession {
 
   async leave() {
     this.intentionalLeave = true;
-    this.connected = false;
+    this.setConnected(false);
     await this.room.leave();
   }
 
@@ -246,8 +270,9 @@ class LegacyMultiplayerSession implements MultiplayerSession {
   }
 
   private sendSnapshot(snapshot: Omit<PlayerSnapshot, "playerId" | "sequence">) {
-    if (!this.connected || this.lobby?.phase !== "playing") return;
+    if (!this.connected || this.lobby?.phase !== "playing") return false;
     this.room.send("player-state", { sequence: ++this.snapshotSequence, state: snapshot });
+    return true;
   }
 
   private setLobby(state: LobbyState) {
@@ -270,5 +295,11 @@ class LegacyMultiplayerSession implements MultiplayerSession {
 
   private emitError(message: string) {
     for (const listener of this.errorListeners) listener(message);
+  }
+
+  private setConnected(connected: boolean) {
+    if (this.connected === connected) return;
+    this.connected = connected;
+    for (const listener of this.connectionListeners) listener(connected);
   }
 }

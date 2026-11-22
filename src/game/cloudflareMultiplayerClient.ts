@@ -7,6 +7,7 @@ import type {
   LobbyState,
   MatchStart,
   NetworkGameConfig,
+  CloudflareSnapshotPipelineStats,
   PlayerSnapshot,
   SnapshotFrame,
 } from "./networkTypes";
@@ -124,13 +125,72 @@ export async function joinCloudflareRoom(endpoint: string, code: string, profile
   return CloudflareMultiplayerSession.connect(endpoint, normalizedCode, profile, mode, "join");
 }
 
+function emptySnapshotPipelineStats(): CloudflareSnapshotPipelineStats {
+  return {
+    sendInvocations: 0,
+    stateChangedAttempts: 0,
+    observedPositionChanges: 0,
+    observedVelocityChanges: 0,
+    observedRotationChanges: 0,
+    observedGameplayChanges: 0,
+    inactiveSkips: 0,
+    socketUnavailableSkips: 0,
+    backpressureSkips: 0,
+    deltaSuppressed: 0,
+    serializedMessages: 0,
+    serializedCharacters: 0,
+    positionChangedMessages: 0,
+    velocityChangedMessages: 0,
+    rotationChangedMessages: 0,
+    gameplayChangedMessages: 0,
+    websocketSendCalls: 0,
+    websocketMessagesReceived: 0,
+    snapshotMessagesReceived: 0,
+    malformedSnapshotMessages: 0,
+    staleSnapshotMessages: 0,
+    incompleteSnapshotMessages: 0,
+    acceptedSnapshotMessages: 0,
+    snapshotFramesEmitted: 0,
+    lastReadyState: -1,
+    lastBufferedAmount: 0,
+    maxBufferedAmount: 0,
+  };
+}
+
+function snapshotValueChanged(key: SnapshotKey, previous: SnapshotState[SnapshotKey], current: SnapshotState[SnapshotKey]) {
+  if (typeof previous !== "number" || typeof current !== "number") return previous !== current;
+  const threshold = key === "aimX" || key === "aimZ" ? 0.1 : key === "hp" || key === "ammo" ? 1 : 0.015;
+  return Math.abs(previous - current) >= threshold;
+}
+
+export function createSnapshotDelta(
+  snapshot: SnapshotState,
+  previous: SnapshotState | null,
+  keyframe: boolean,
+) {
+  const delta: Partial<SnapshotState> = keyframe ? { ...snapshot } : {};
+  const changedKeys: SnapshotKey[] = [];
+  if (previous) {
+    for (const key of SNAPSHOT_KEYS) {
+      const value = snapshot[key];
+      if (snapshotValueChanged(key, previous[key], value)) {
+        changedKeys.push(key);
+        if (!keyframe) delta[key] = value as never;
+      }
+    }
+  }
+  return { delta, changedKeys };
+}
+
 class CloudflareMultiplayerSession implements MultiplayerSession {
   private readonly lobbyListeners = new Set<(state: LobbyState) => void>();
   private readonly matchListeners = new Set<(match: MatchStart) => void>();
   private readonly snapshotListeners = new Set<(frame: SnapshotFrame) => void>();
   private readonly errorListeners = new Set<(message: string) => void>();
+  private readonly connectionListeners = new Set<(connected: boolean) => void>();
   private readonly snapshotHistory: SnapshotFrame[] = [];
   private readonly remoteStates = new Map<string, { sequence: number; state: SnapshotState }>();
+  private readonly staleSnapshotTimes: number[] = [];
   private readonly identity: ResumeIdentity;
   private lobby: LobbyState | null = null;
   private lastMatch: MatchStart | null = null;
@@ -145,7 +205,10 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
   private socket: WebSocket | null = null;
   private snapshotSequence = sequenceBase();
   private lastSentSnapshot: SnapshotState | null = null;
+  private lastObservedSnapshot: SnapshotState | null = null;
   private lastKeyframeAt = 0;
+  private readonly networkDebugEnabled = new URLSearchParams(window.location.search).has("netdebug");
+  private snapshotPipelineStats = emptySnapshotPipelineStats();
 
   private constructor(
     private readonly endpoint: string,
@@ -203,6 +266,12 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
     return () => this.errorListeners.delete(listener);
   }
 
+  onConnectionChange(listener: (connected: boolean) => void): () => void {
+    this.connectionListeners.add(listener);
+    listener(this.connected);
+    return () => this.connectionListeners.delete(listener);
+  }
+
   createGameConfig(match: MatchStart): NetworkGameConfig {
     return {
       playerId: this.playerId,
@@ -215,7 +284,11 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
       serverNow: () => Date.now() + this.serverOffset,
       canControlMatch: () => this.lobby?.hostPlayerId === this.playerId,
       finishMatch: (matchId) => this.finishMatch(matchId),
+      isConnected: () => this.connected,
+      onConnectionChange: (listener) => this.onConnectionChange(listener),
+      getCloudflareSnapshotPipelineStats: () => this.networkDebugEnabled ? { ...this.snapshotPipelineStats } : null,
       sendSnapshot: (snapshot) => this.sendSnapshot(snapshot),
+      getTransportStaleSnapshotCount: () => this.transportStaleSnapshotCount(),
       onSnapshots: (listener) => this.onSnapshots(listener),
       onPlayersChange: (listener) => this.onLobbyState((state) => listener(state.players)),
     };
@@ -239,7 +312,7 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
 
   async leave() {
     this.intentionalLeave = true;
-    this.connected = false;
+    this.setConnected(false);
     if (this.heartbeatTimer !== null) window.clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
     this.send({ t: "leave" });
@@ -264,6 +337,7 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
         socket.send(JSON.stringify({ t: "auth", ticket, clientTs }));
       }, { once: true });
       socket.addEventListener("message", (event) => {
+        if (this.networkDebugEnabled) this.snapshotPipelineStats.websocketMessagesReceived += 1;
         const message = this.parseMessage(event.data);
         if (!message) return;
         if (message.t === "welcome") {
@@ -271,7 +345,7 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
           window.clearTimeout(timeout);
           settled = true;
           this.intent = "join";
-          this.connected = true;
+          this.setConnected(true);
           this.reconnecting = false;
           this.reconnectAttempts = 0;
           this.lastHeartbeatResponse = Date.now();
@@ -312,7 +386,7 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
           reject(new Error(event.reason || `The room closed the connection (${event.code}).`));
         }
         if (this.socket === socket) this.socket = null;
-        this.connected = false;
+        this.setConnected(false);
         if (!this.intentionalLeave && this.playerId) this.scheduleReconnect();
       });
     });
@@ -350,28 +424,66 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
   }
 
   private sendSnapshot(snapshot: SnapshotState) {
-    if (!this.connected || this.lobby?.phase !== "playing" || !this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-    if (this.socket.bufferedAmount > 64 * 1024) return;
+    const stats = this.networkDebugEnabled ? this.snapshotPipelineStats : null;
+    if (stats) {
+      stats.sendInvocations += 1;
+      if (this.lastObservedSnapshot) {
+        const observedChanges = SNAPSHOT_KEYS.filter((key) => snapshot[key] !== this.lastObservedSnapshot?.[key]);
+        if (observedChanges.length) stats.stateChangedAttempts += 1;
+        const hasObserved = (keys: SnapshotKey[]) => observedChanges.some((key) => keys.includes(key));
+        if (hasObserved(["x", "y", "z"])) stats.observedPositionChanges += 1;
+        if (hasObserved(["vx", "vy", "vz"])) stats.observedVelocityChanges += 1;
+        if (hasObserved(["heading", "pitch", "roll"])) stats.observedRotationChanges += 1;
+        if (hasObserved(["boosting", "drifting", "driftLevel", "grounded", "alive", "hp", "weapon", "ammo", "firing", "aimX", "aimZ"])) {
+          stats.observedGameplayChanges += 1;
+        }
+      }
+      this.lastObservedSnapshot = { ...snapshot };
+    }
+    const socket = this.socket;
+    if (stats) {
+      stats.lastReadyState = socket?.readyState ?? -1;
+      stats.lastBufferedAmount = socket?.bufferedAmount ?? 0;
+      stats.maxBufferedAmount = Math.max(stats.maxBufferedAmount, stats.lastBufferedAmount);
+    }
+    if (!this.connected || this.lobby?.phase !== "playing") {
+      if (stats) stats.inactiveSkips += 1;
+      return false;
+    }
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      if (stats) stats.socketUnavailableSkips += 1;
+      return false;
+    }
+    if (socket.bufferedAmount > 64 * 1024) {
+      if (stats) stats.backpressureSkips += 1;
+      return false;
+    }
     const now = Date.now();
     const keyframe = !this.lastSentSnapshot || now - this.lastKeyframeAt >= KEYFRAME_INTERVAL_MS;
-    const delta: Partial<SnapshotState> = keyframe ? { ...snapshot } : {};
-    if (!keyframe) {
-      for (const key of SNAPSHOT_KEYS) {
-        const value = snapshot[key];
-        const previous = this.lastSentSnapshot?.[key];
-        if (previous === undefined || this.changed(key, previous, value)) delta[key] = value as never;
+    const { delta, changedKeys } = createSnapshotDelta(snapshot, this.lastSentSnapshot, keyframe);
+    if (stats) {
+      const hasAny = (keys: SnapshotKey[]) => changedKeys.some((key) => keys.includes(key));
+      if (hasAny(["x", "y", "z"])) stats.positionChangedMessages += 1;
+      if (hasAny(["vx", "vy", "vz"])) stats.velocityChangedMessages += 1;
+      if (hasAny(["heading", "pitch", "roll"])) stats.rotationChangedMessages += 1;
+      if (hasAny(["boosting", "drifting", "driftLevel", "grounded", "alive", "hp", "weapon", "ammo", "firing", "aimX", "aimZ"])) {
+        stats.gameplayChangedMessages += 1;
       }
     }
-    if (Object.keys(delta).length === 0) return;
-    this.socket.send(JSON.stringify({ t: "s", q: ++this.snapshotSequence, d: delta }));
+    if (Object.keys(delta).length === 0) {
+      if (stats) stats.deltaSuppressed += 1;
+      return false;
+    }
+    const payload = JSON.stringify({ t: "s", q: ++this.snapshotSequence, d: delta });
+    if (stats) {
+      stats.serializedMessages += 1;
+      stats.serializedCharacters += payload.length;
+    }
+    socket.send(payload);
+    if (stats) stats.websocketSendCalls += 1;
     this.lastSentSnapshot = { ...snapshot };
     if (keyframe) this.lastKeyframeAt = now;
-  }
-
-  private changed(key: SnapshotKey, previous: SnapshotState[SnapshotKey], current: SnapshotState[SnapshotKey]) {
-    if (typeof previous !== "number" || typeof current !== "number") return previous !== current;
-    const threshold = key === "aimX" || key === "aimZ" ? 0.1 : key === "hp" || key === "ammo" ? 1 : 0.015;
-    return Math.abs(previous - current) >= threshold;
+    return true;
   }
 
   private parseMessage(data: unknown): Record<string, unknown> | null {
@@ -411,12 +523,39 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
   }
 
   private receiveSnapshot(message: SnapshotMessage) {
-    if (typeof message.p !== "string" || !Number.isSafeInteger(message.q) || !Number.isFinite(message.ts)) return;
+    const stats = this.networkDebugEnabled ? this.snapshotPipelineStats : null;
+    if (stats) stats.snapshotMessagesReceived += 1;
+    if (
+      typeof message.p !== "string"
+      || !Number.isSafeInteger(message.q)
+      || !Number.isFinite(message.ts)
+      || !message.d
+      || typeof message.d !== "object"
+      || Array.isArray(message.d)
+    ) {
+      if (stats) stats.malformedSnapshotMessages += 1;
+      return;
+    }
     const previous = this.remoteStates.get(message.p);
-    if (previous && message.q <= previous.sequence) return;
+    if (previous && message.q <= previous.sequence) {
+      if (stats) stats.staleSnapshotMessages += 1;
+      const now = performance.now();
+      this.staleSnapshotTimes.push(now);
+      while (this.staleSnapshotTimes.length && this.staleSnapshotTimes[0] < now - 10_000) {
+        this.staleSnapshotTimes.shift();
+      }
+      return;
+    }
     const state = { ...(previous?.state ?? {}), ...message.d } as SnapshotState;
-    if (SNAPSHOT_KEYS.some((key) => state[key] === undefined)) return;
+    if (SNAPSHOT_KEYS.some((key) => state[key] === undefined)) {
+      if (stats) stats.incompleteSnapshotMessages += 1;
+      return;
+    }
     this.remoteStates.set(message.p, { sequence: message.q, state });
+    if (stats) {
+      stats.acceptedSnapshotMessages += 1;
+      stats.snapshotFramesEmitted += 1;
+    }
     this.setSnapshots({
       serverTime: message.ts,
       players: [{ ...state, playerId: message.p, sequence: message.q }],
@@ -433,9 +572,12 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
     this.lastMatch = match;
     this.snapshotHistory.length = 0;
     this.remoteStates.clear();
+    this.staleSnapshotTimes.length = 0;
     this.snapshotSequence = sequenceBase();
     this.lastSentSnapshot = null;
+    this.lastObservedSnapshot = null;
     this.lastKeyframeAt = 0;
+    if (this.networkDebugEnabled) this.snapshotPipelineStats = emptySnapshotPipelineStats();
     for (const listener of this.matchListeners) listener(match);
   }
 
@@ -453,7 +595,21 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
     for (const listener of this.snapshotListeners) listener(frame);
   }
 
+  private transportStaleSnapshotCount() {
+    const cutoff = performance.now() - 10_000;
+    while (this.staleSnapshotTimes.length && this.staleSnapshotTimes[0] < cutoff) {
+      this.staleSnapshotTimes.shift();
+    }
+    return this.staleSnapshotTimes.length;
+  }
+
   private emitError(message: string) {
     for (const listener of this.errorListeners) listener(message);
+  }
+
+  private setConnected(connected: boolean) {
+    if (this.connected === connected) return;
+    this.connected = connected;
+    for (const listener of this.connectionListeners) listener(connected);
   }
 }

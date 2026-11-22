@@ -9,12 +9,21 @@ import { Effects } from "./effects";
 import { audio, type SfxName } from "./audio";
 import { newBotState, updateBot, type BotState } from "./ai";
 import { MAP_ID } from "./spawns";
+import { RemoteSnapshotBuffer } from "./remoteInterpolation";
+import { NetworkDiagnostics } from "./networkDiagnostics";
+import { NetworkSnapshotScheduler } from "./networkSnapshotScheduler";
 import {
   BOT_NAMES, KART_PRESETS, TEAM_COLORS, WEAPONS, WEAPON_IDS,
   type GameCallbacks, type GameConfig, type HudRow, type HudState, type KartPreset, type MatchResult,
   type Mode, type ResultRow, type TouchInput, type WeaponId,
 } from "./types";
-import type { NetworkPlayer, PlayerSnapshot, SnapshotFrame } from "./networkTypes";
+import type {
+  CloudflareSnapshotPipelineStats,
+  NetworkPlayer,
+  PlayerSnapshot,
+  SnapshotFrame,
+  SnapshotServerMetrics,
+} from "./networkTypes";
 
 export interface Input {
   throttle: number;
@@ -30,8 +39,10 @@ export interface Kart {
   id: number;
   networkId: string | null;
   isRemote: boolean;
-  remoteSamples: (PlayerSnapshot & { serverTime: number })[];
-  lastRemoteSequence: number;
+  remoteSnapshots: RemoteSnapshotBuffer;
+  remoteWasExtrapolating: boolean;
+  remoteCorrectionOffset: THREE.Vector3;
+  remoteCorrectionRemainingMs: number;
   name: string;
   avatar: string;
   isPlayer: boolean;
@@ -216,9 +227,19 @@ export class Game {
   phase: "intro" | "playing" | "ended" = "intro";
   private introT = INTRO_TIME;
   private lastCount = 99;
-  private networkSendT = 0;
+  private snapshotScheduler: NetworkSnapshotScheduler<Omit<PlayerSnapshot, "playerId" | "sequence">> | null = null;
   private unsubscribeSnapshots: (() => void) | null = null;
   private unsubscribePlayers: (() => void) | null = null;
+  private unsubscribeNetworkConnection: (() => void) | null = null;
+  private remoteDiagnostics: HTMLPreElement | null = null;
+  private networkDiagnostics: NetworkDiagnostics | null = null;
+  private diagnosticsTimer: number | null = null;
+  private nextDiagnosticsTimerAt = 0;
+  private lastDiagnosticsRenderAt = 0;
+  private snapshotServerMetrics: SnapshotServerMetrics | null = null;
+  private snapshotServerMetricsPending = false;
+  private snapshotServerMetricsDisabled = false;
+  private nextSnapshotServerMetricsAt = 0;
   private goT = 0;
   private timeLeft: number;
   private elapsed = 0;
@@ -257,12 +278,30 @@ export class Game {
   private fov = 68;
   private deathPos = new THREE.Vector3();
   private camPos = new THREE.Vector3();
+  private readonly onVisibilityChange = () => {
+    this.snapshotScheduler?.setVisible(document.visibilityState === "visible");
+  };
 
   constructor(container: HTMLElement, overlay: HTMLElement, minimap: HTMLCanvasElement | null, cfg: GameConfig, cb: GameCallbacks) {
     this.cfg = cfg;
     this.cb = cb;
     this.container = container;
     this.overlay = overlay;
+    if (cfg.network && new URLSearchParams(window.location.search).has("netdebug")) {
+      const now = performance.now();
+      this.networkDiagnostics = new NetworkDiagnostics(now);
+      this.remoteDiagnostics = document.createElement("pre");
+      this.remoteDiagnostics.className = "pointer-events-none absolute left-2 top-2 z-50 max-w-[24rem] rounded bg-black/80 p-2 text-[10px] leading-4 text-green-200";
+      this.remoteDiagnostics.setAttribute("aria-label", "Remote network diagnostics");
+      overlay.appendChild(this.remoteDiagnostics);
+      this.nextDiagnosticsTimerAt = now + 100;
+      this.diagnosticsTimer = window.setInterval(() => {
+        const tick = performance.now();
+        this.networkDiagnostics?.recordEventLoopDelay(tick - this.nextDiagnosticsTimerAt, tick);
+        this.nextDiagnosticsTimerAt = tick + 100;
+        this.updateRemoteDiagnostics(tick);
+      }, 100);
+    }
     this.minimap = minimap;
     this.mm = minimap ? minimap.getContext("2d") : null;
     this.mode = cfg.mode;
@@ -343,9 +382,22 @@ export class Game {
     this.scene.add(this.aimLine);
 
     this.setupKarts();
-    if (cfg.network) {
-      this.unsubscribeSnapshots = cfg.network.onSnapshots((frame) => this.receiveSnapshots(frame));
-      this.unsubscribePlayers = cfg.network.onPlayersChange((players) => this.syncNetworkPlayers(players));
+    const network = cfg.network;
+    if (network) {
+      this.unsubscribeSnapshots = network.onSnapshots((frame) => this.receiveSnapshots(frame));
+      this.unsubscribePlayers = network.onPlayersChange((players) => this.syncNetworkPlayers(players));
+      this.snapshotScheduler = new NetworkSnapshotScheduler({
+        getSnapshot: () => this.playerSnapshot(),
+        sendSnapshot: (snapshot) => network.sendSnapshot(snapshot),
+        onAttempt: (now) => this.networkDiagnostics?.recordSendAttempt(now),
+        onSent: (now) => this.networkDiagnostics?.recordSent(now),
+      });
+      this.snapshotScheduler.setVisible(document.visibilityState === "visible");
+      this.snapshotScheduler.setConnected(network.isConnected());
+      this.unsubscribeNetworkConnection = network.onConnectionChange((connected) => {
+        this.snapshotScheduler?.setConnected(connected);
+      });
+      document.addEventListener("visibilitychange", this.onVisibilityChange);
     }
     this.applyQuality(this.level);
     this.resize();
@@ -442,7 +494,9 @@ export class Game {
     if (o.isPlayer && !this.cfg.network) tag.style.display = "none";
     this.overlay.appendChild(tag);
     const k: Kart = {
-      id: this.nextId++, networkId: o.networkId ?? null, isRemote: o.isRemote ?? false, remoteSamples: [], lastRemoteSequence: -1,
+      id: this.nextId++, networkId: o.networkId ?? null, isRemote: o.isRemote ?? false,
+      remoteSnapshots: new RemoteSnapshotBuffer(), remoteWasExtrapolating: false,
+      remoteCorrectionOffset: new THREE.Vector3(), remoteCorrectionRemainingMs: 0,
       name: o.name, avatar: o.avatar, isPlayer: o.isPlayer, team: o.team, preset: o.preset, rig, tag, tagBar: fill,
       x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, heading: 0, grounded: true, slopeVy: 0, steerCur: 0, pitch: 0, roll: 0,
       speedF: o.isPlayer ? 1 : 0.78 + o.skill * 0.12,
@@ -492,85 +546,129 @@ export class Game {
   }
 
   private receiveSnapshots(frame: SnapshotFrame) {
+    const network = this.cfg.network;
+    if (!network) return;
     for (const snapshot of frame.players) {
       const kart = this.karts.find((candidate) => candidate.isRemote && candidate.networkId === snapshot.playerId);
-      if (!kart || snapshot.sequence <= kart.lastRemoteSequence) continue;
-      kart.lastRemoteSequence = snapshot.sequence;
-      kart.remoteSamples.push({ ...snapshot, serverTime: frame.serverTime });
-      kart.remoteSamples.sort((a, b) => a.serverTime - b.serverTime);
-      if (kart.remoteSamples.length > 24) kart.remoteSamples.splice(0, kart.remoteSamples.length - 24);
+      if (!kart) continue;
+      const receivedAt = performance.now();
+      if (this.networkDiagnostics
+        && !this.networkDiagnostics.recordRemoteSnapshot(
+          snapshot.playerId,
+          snapshot.sequence,
+          network.serverNow() - frame.serverTime,
+          receivedAt,
+        )) continue;
+      const inserted = kart.remoteSnapshots.push(snapshot, frame.serverTime);
+      this.networkDiagnostics?.recordInterpolationBufferResult(inserted, receivedAt);
     }
   }
 
-  private updateRemoteKart(kart: Kart) {
+  private updateRemoteKart(kart: Kart, dt: number) {
     const network = this.cfg.network;
-    if (!network || kart.remoteSamples.length === 0) return;
-    const samples = kart.remoteSamples;
+    if (!network) return;
     const renderTime = network.serverNow() - 100;
-    while (samples.length > 2 && samples[1].serverTime <= renderTime) samples.shift();
-
-    const first = samples[0];
-    const latest = samples[samples.length - 1];
-    const next = samples.find((sample) => sample.serverTime >= renderTime);
-    let x = first.x;
-    let y = first.y;
-    let z = first.z;
-    let vx = first.vx;
-    let vy = first.vy;
-    let vz = first.vz;
-    let heading = first.heading;
-    let pitch = first.pitch;
-    let roll = first.roll;
-    let state = first;
-    if (next && next !== first) {
-      const previous = samples[samples.indexOf(next) - 1] ?? first;
-      const t = Math.max(0, Math.min(1, (renderTime - previous.serverTime) / Math.max(1, next.serverTime - previous.serverTime)));
-      x = previous.x + (next.x - previous.x) * t;
-      y = previous.y + (next.y - previous.y) * t;
-      z = previous.z + (next.z - previous.z) * t;
-      vx = previous.vx + (next.vx - previous.vx) * t;
-      vy = previous.vy + (next.vy - previous.vy) * t;
-      vz = previous.vz + (next.vz - previous.vz) * t;
-      heading = lerpAngle(previous.heading, next.heading, t);
-      pitch = previous.pitch + (next.pitch - previous.pitch) * t;
-      roll = previous.roll + (next.roll - previous.roll) * t;
-      state = t < 0.5 ? previous : next;
-    } else if (renderTime > latest.serverTime) {
-      state = latest;
-      vx = latest.vx;
-      vy = latest.vy;
-      vz = latest.vz;
-      heading = latest.heading;
-      pitch = latest.pitch;
-      roll = latest.roll;
-      const staleForMs = renderTime - latest.serverTime;
-      if (staleForMs <= 250) {
-        const extrapolation = Math.min(0.12, staleForMs / 1000);
-        x = latest.x + vx * extrapolation;
-        y = latest.y + vy * extrapolation;
-        z = latest.z + vz * extrapolation;
-      } else {
-        x = latest.x;
-        y = latest.y;
-        z = latest.z;
-        vx = 0;
-        vy = 0;
-        vz = 0;
-      }
+    const result = kart.remoteSnapshots.sample(renderTime);
+    if (!result) return;
+    if (result.extrapolating) this.networkDiagnostics?.recordExtrapolationFrame(performance.now());
+    let { x, y, z } = result.snapshot;
+    if (kart.remoteWasExtrapolating && !result.extrapolating && result.snapshot.alive === kart.alive) {
+      kart.remoteCorrectionOffset.set(kart.x - x, kart.y - y, kart.z - z);
+      kart.remoteCorrectionRemainingMs = 100;
+      this.networkDiagnostics?.recordRecoveryCorrection(kart.remoteCorrectionOffset.length(), performance.now());
     }
+    if (result.snapshot.alive !== kart.alive) {
+      kart.remoteCorrectionOffset.set(0, 0, 0);
+      kart.remoteCorrectionRemainingMs = 0;
+    } else if (kart.remoteCorrectionRemainingMs > 0) {
+      const correction = kart.remoteCorrectionRemainingMs / 100;
+      x += kart.remoteCorrectionOffset.x * correction;
+      y += kart.remoteCorrectionOffset.y * correction;
+      z += kart.remoteCorrectionOffset.z * correction;
+      kart.remoteCorrectionRemainingMs = Math.max(0, kart.remoteCorrectionRemainingMs - dt * 1000);
+    }
+    kart.remoteWasExtrapolating = result.extrapolating;
+    const renderSnapshot = { ...result.snapshot, x, y, z };
+    this.applyNetworkSnapshot(kart, renderSnapshot);
+  }
 
-    this.applyNetworkSnapshot(kart, {
-      ...state,
-      x,
-      y,
-      z,
-      vx,
-      vy,
-      vz,
-      heading,
-      pitch,
-      roll,
-    });
+  private updateRemoteDiagnostics(now: number) {
+    if (!this.remoteDiagnostics) return;
+    this.requestSnapshotServerMetrics(now);
+    const cloudflareStats = this.cfg.network?.getCloudflareSnapshotPipelineStats();
+    if (cloudflareStats) {
+      this.remoteDiagnostics.dataset.cloudflarePipeline = JSON.stringify(cloudflareStats);
+      this.remoteDiagnostics.dataset.pipelineSampleAt = now.toFixed(1);
+    }
+    if (now - this.lastDiagnosticsRenderAt < 1_000) return;
+    this.lastDiagnosticsRenderAt = now;
+    const stats = this.networkDiagnostics?.summarize(now);
+    if (!stats) return;
+    const remotes = this.karts.filter((kart) => kart.isRemote);
+    const bufferDepth = remotes.length
+      ? remotes.reduce((sum, kart) => sum + kart.remoteSnapshots.depth, 0) / remotes.length
+      : 0;
+    const windowSeconds = (stats.windowMs / 1_000).toFixed(1);
+    const transportStale = this.cfg.network?.getTransportStaleSnapshotCount() ?? 0;
+    const lines = [
+      `Rolling window: ${windowSeconds}s`,
+      `Client snapshots/s: ${stats.sentPerSecond.toFixed(1)} sent / ${stats.sendAttemptsPerSecond.toFixed(1)} attempted`,
+      `Remote receives/s: ${stats.remoteReceivesPerSecond.toFixed(1)}`,
+      `Interpolation buffer: ${stats.interpolationBufferInserts} inserted / ${stats.interpolationBufferOffers} offered / ${stats.interpolationBufferRejections} rejected`,
+      `Snapshot age p95: ${stats.snapshotAgeP95Ms.toFixed(1)} ms`,
+      `Snapshot jitter p95: ${stats.snapshotJitterP95Ms.toFixed(1)} ms`,
+      `Sequence gaps / stale: ${stats.sequenceGaps} / ${stats.staleSnapshots + transportStale}`,
+      `Remote buffer depth avg: ${bufferDepth.toFixed(1)}`,
+      `Browser FPS: ${stats.browserFramesPerSecond.toFixed(1)}`,
+      `Event-loop delay p95: ${stats.eventLoopDelayP95Ms.toFixed(1)} ms`,
+      `Extrapolation frames/s: ${stats.extrapolationFramesPerSecond.toFixed(1)}`,
+      `Recovery correction avg: ${stats.meanRecoveryCorrection.toFixed(3)} units (${stats.recoveryCorrections})`,
+    ];
+    if (cloudflareStats) lines.push(...this.formatCloudflarePipelineStats(cloudflareStats));
+    if (this.snapshotServerMetrics) {
+      const metrics = this.snapshotServerMetrics;
+      lines.push(
+        `Server snapshots: ${metrics.receivedSnapshotMessagesPerSecond?.toFixed(1) ?? "n/a"} received/s / ${metrics.acceptedSnapshotsPerSecond?.toFixed(1) ?? "n/a"} accepted/s`,
+        `Server validation: ${metrics.validatedSnapshotDeltasPerSecond?.toFixed(1) ?? metrics.validatedSnapshotMessagesPerSecond?.toFixed(1) ?? "n/a"}/s`,
+        `Server relay: ${metrics.relayTicksPerSecond?.toFixed(1) ?? "n/a"} ticks/s / ${metrics.serverBroadcastAttemptsPerSecond?.toFixed(1) ?? metrics.relayedFramesPerSecond?.toFixed(1) ?? "n/a"} attempts/s`,
+        `Server rejects: ${metrics.rejectedSnapshots ?? 0}`,
+      );
+    }
+    this.remoteDiagnostics.textContent = lines.join("\n");
+  }
+
+  private formatCloudflarePipelineStats(stats: CloudflareSnapshotPipelineStats) {
+    return [
+      `CF tx totals: invoked ${stats.sendInvocations}, unchanged ${stats.deltaSuppressed}, inactive ${stats.inactiveSkips}, socket ${stats.socketUnavailableSkips}, backpressure ${stats.backpressureSkips}`,
+      `CF sampled state changes: any ${stats.stateChangedAttempts}, pos ${stats.observedPositionChanges}, vel ${stats.observedVelocityChanges}, rot ${stats.observedRotationChanges}, gameplay ${stats.observedGameplayChanges}`,
+      `CF delta messages: pos ${stats.positionChangedMessages}, vel ${stats.velocityChangedMessages}, rot ${stats.rotationChangedMessages}, gameplay ${stats.gameplayChangedMessages}`,
+      `CF tx wire: serialized ${stats.serializedMessages} (${stats.serializedCharacters} chars), WebSocket.send ${stats.websocketSendCalls}, buffered ${stats.lastBufferedAmount} B (max ${stats.maxBufferedAmount} B)`,
+      `CF rx: WS ${stats.websocketMessagesReceived}, snapshots ${stats.snapshotMessagesReceived}, accepted ${stats.acceptedSnapshotMessages}, stale ${stats.staleSnapshotMessages}, malformed ${stats.malformedSnapshotMessages}, incomplete ${stats.incompleteSnapshotMessages}, frames ${stats.snapshotFramesEmitted}`,
+    ];
+  }
+
+  private requestSnapshotServerMetrics(now: number) {
+    const getMetrics = this.cfg.network?.getSnapshotServerMetrics;
+    if (
+      !getMetrics
+      || this.snapshotServerMetricsDisabled
+      || this.snapshotServerMetricsPending
+      || now < this.nextSnapshotServerMetricsAt
+    ) return;
+    this.snapshotServerMetricsPending = true;
+    this.nextSnapshotServerMetricsAt = now + 1_000;
+    void getMetrics()
+      .then((metrics) => {
+        if (metrics) this.snapshotServerMetrics = metrics;
+        else this.snapshotServerMetricsDisabled = true;
+      })
+      .catch((error: unknown) => {
+        console.warn("Could not read local multiplayer server snapshot metrics.", error);
+        this.nextSnapshotServerMetricsAt = performance.now() + 5_000;
+      })
+      .finally(() => {
+        this.snapshotServerMetricsPending = false;
+      });
   }
 
   private applyNetworkSnapshot(kart: Kart, snapshot: PlayerSnapshot) {
@@ -649,6 +747,7 @@ export class Game {
   }
   setPaused(p: boolean) {
     this.paused = p;
+    this.snapshotScheduler?.setActive(!p && this.phase === "playing");
     if (p) {
       audio.suspend();
       audio.setEngine(0, false, 0, false);
@@ -668,6 +767,9 @@ export class Game {
     if (this.disposed) return;
     this.disposed = true;
     cancelAnimationFrame(this.raf);
+    this.snapshotScheduler?.dispose();
+    this.snapshotScheduler = null;
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
@@ -675,6 +777,7 @@ export class Game {
     window.removeEventListener("contextmenu", this.onContext);
     this.unsubscribeSnapshots?.();
     this.unsubscribePlayers?.();
+    this.unsubscribeNetworkConnection?.();
     audio.stopEngine();
     audio.stopMusic();
     audio.resume();
@@ -688,6 +791,8 @@ export class Game {
     this.composer?.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
+    this.remoteDiagnostics?.remove();
+    if (this.diagnosticsTimer !== null) window.clearInterval(this.diagnosticsTimer);
   }
 
   // ------------------------------------------------------------------ input
@@ -883,6 +988,7 @@ export class Game {
   private frame = (now: number) => {
     if (this.disposed) return;
     this.raf = requestAnimationFrame(this.frame);
+    this.networkDiagnostics?.recordFrame(now);
     let dt = (now - this.lastT) / 1000;
     this.lastT = now;
     if (dt <= 0) return;
@@ -921,7 +1027,7 @@ export class Game {
   private step(dt: number) {
     this.time += dt;
     this.arena.update(this.time, dt);
-    for (const k of this.karts) if (k.isRemote) this.updateRemoteKart(k);
+    for (const k of this.karts) if (k.isRemote) this.updateRemoteKart(k, dt);
 
     if (this.phase === "intro") {
       this.introT = this.cfg.network
@@ -934,6 +1040,7 @@ export class Game {
       }
       if (this.introT <= 0) {
         this.phase = "playing";
+        this.snapshotScheduler?.setActive(!this.paused);
         this.goT = 0.9;
         audio.sfx("go");
         this.cb.onEvent({ type: "banner", text: "GO!", color: "#6dff6d" });
@@ -968,14 +1075,13 @@ export class Game {
     this.updateReticle();
     this.updateAudio();
     this.drawMinimap();
+    this.updateRemoteDiagnostics(performance.now());
 
     this.hudT -= dt;
     if (this.hudT <= 0) {
       this.hudT = 0.066;
       this.cb.onHud(this.buildHud());
     }
-    this.publishPlayerSnapshot(dt);
-
     if (this.endPending > 0) {
       this.endPending -= dt;
       if (this.endPending <= 0) this.endMatch();
@@ -989,14 +1095,9 @@ export class Game {
     }
   }
 
-  private publishPlayerSnapshot(dt: number) {
-    const network = this.cfg.network;
-    if (!network || this.phase !== "playing") return;
-    this.networkSendT += dt;
-    if (this.networkSendT < 0.05) return;
-    this.networkSendT -= 0.05;
+  private playerSnapshot(): Omit<PlayerSnapshot, "playerId" | "sequence"> {
     const player = this.player;
-    network.sendSnapshot({
+    return {
       x: player.x,
       y: player.y,
       z: player.z,
@@ -1017,7 +1118,7 @@ export class Game {
       firing: player.input.fire,
       aimX: player.input.aimX,
       aimZ: player.input.aimZ,
-    });
+    };
   }
 
   // ------------------------------------------------------------------ kart physics
@@ -1932,6 +2033,7 @@ export class Game {
   private endMatch() {
     if (this.phase === "ended") return;
     this.phase = "ended";
+    this.snapshotScheduler?.setActive(false);
     const rows: ResultRow[] = [
       ...this.karts.map((k) => ({ name: k.name, avatar: k.avatar, kills: k.kills, deaths: k.deaths, score: Math.round(k.score), team: k.team, isPlayer: k.isPlayer })),
       ...this.retired,

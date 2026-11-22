@@ -81,6 +81,54 @@ export interface MatchStart {
   lateJoin?: boolean;
 }
 
+export interface CloudflareSnapshotPipelineStats {
+  sendInvocations: number;
+  stateChangedAttempts: number;
+  observedPositionChanges: number;
+  observedVelocityChanges: number;
+  observedRotationChanges: number;
+  observedGameplayChanges: number;
+  inactiveSkips: number;
+  socketUnavailableSkips: number;
+  backpressureSkips: number;
+  deltaSuppressed: number;
+  serializedMessages: number;
+  serializedCharacters: number;
+  positionChangedMessages: number;
+  velocityChangedMessages: number;
+  rotationChangedMessages: number;
+  gameplayChangedMessages: number;
+  websocketSendCalls: number;
+  websocketMessagesReceived: number;
+  snapshotMessagesReceived: number;
+  malformedSnapshotMessages: number;
+  staleSnapshotMessages: number;
+  incompleteSnapshotMessages: number;
+  acceptedSnapshotMessages: number;
+  snapshotFramesEmitted: number;
+  lastReadyState: number;
+  lastBufferedAmount: number;
+  maxBufferedAmount: number;
+}
+
+export interface SnapshotServerMetrics {
+  enabled: boolean;
+  windowMs?: number;
+  receivedSnapshotMessagesPerSecond?: number;
+  validatedSnapshotDeltasPerSecond?: number;
+  validatedSnapshotMessagesPerSecond?: number;
+  acceptedSnapshotsPerSecond?: number;
+  serverBroadcastAttemptsPerSecond?: number;
+  serverRelayedFramesPerSecond?: number;
+  relayTicksPerSecond?: number;
+  relayedFramesPerSecond?: number;
+  rejectedSnapshots?: number;
+  rateLimitedSnapshots?: number;
+  rejectedSequences?: number;
+  invalidSnapshots?: number;
+  inactiveSnapshots?: number;
+}
+
 export interface NetworkGameConfig {
   playerId: string;
   matchId: string;
@@ -91,7 +139,12 @@ export interface NetworkGameConfig {
   serverNow: () => number;
   canControlMatch: () => boolean;
   finishMatch: (matchId: string) => void;
-  sendSnapshot: (snapshot: Omit<PlayerSnapshot, "playerId" | "sequence">) => void;
+  isConnected: () => boolean;
+  onConnectionChange: (listener: (connected: boolean) => void) => () => void;
+  getCloudflareSnapshotPipelineStats: () => CloudflareSnapshotPipelineStats | null;
+  getSnapshotServerMetrics?: () => Promise<SnapshotServerMetrics | null>;
+  sendSnapshot: (snapshot: Omit<PlayerSnapshot, "playerId" | "sequence">) => boolean;
+  getTransportStaleSnapshotCount: () => number;
   onSnapshots: (listener: (frame: SnapshotFrame) => void) => () => void;
   onPlayersChange: (listener: (players: NetworkPlayer[]) => void) => () => void;
 }

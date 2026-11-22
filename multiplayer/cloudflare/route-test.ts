@@ -1,4 +1,4 @@
-import worker, { handleWorkerFetch } from "./worker";
+import worker, { consumeSnapshotRateLimitToken, handleWorkerFetch } from "./worker";
 
 const secret = "a".repeat(32);
 
@@ -26,6 +26,24 @@ async function assertResponse(
 }
 
 async function main() {
+  let rateLimitBucket: ReturnType<typeof consumeSnapshotRateLimitToken>["bucket"] | undefined;
+  for (let index = 0; index < 20; index += 1) {
+    const result = consumeSnapshotRateLimitToken(rateLimitBucket, index * 50);
+    if (!result.allowed) {
+      throw new Error("The snapshot rate limiter rejected a regular 20 Hz stream.");
+    }
+    rateLimitBucket = result.bucket;
+  }
+  console.log("20 Hz snapshot stream allowed: true");
+
+  const firstBurst = consumeSnapshotRateLimitToken(undefined, 0);
+  const secondBurst = consumeSnapshotRateLimitToken(firstBurst.bucket, 1);
+  const excessBurst = consumeSnapshotRateLimitToken(secondBurst.bucket, 2);
+  if (!firstBurst.allowed || !secondBurst.allowed || excessBurst.allowed) {
+    throw new Error("Snapshot burst capacity is not limited to two immediate messages.");
+  }
+  console.log("snapshot burst capacity: 2");
+
   const env = envWithStub(async () => new Response(null, { status: 200 }));
   await assertResponse(
     "GET /health",
@@ -57,6 +75,29 @@ async function main() {
         Origin: "https://kartswar.vercel.app",
       },
     }), env),
+    200,
+  );
+  await assertResponse(
+    "diagnostics disabled by default",
+    worker.fetch(new Request("http://127.0.0.1/__debug/metrics/ABCDE"), env),
+    404,
+  );
+  await assertResponse(
+    "diagnostics unavailable outside localhost",
+    worker.fetch(new Request("https://worker.example/__debug/metrics/ABCDE", {
+      headers: { "Origin": "https://kartswar.vercel.app" },
+    }), {
+      ...env,
+      KARTSWAR_NETWORK_DIAGNOSTICS: "true",
+    }),
+    404,
+  );
+  await assertResponse(
+    "localhost diagnostics route",
+    worker.fetch(new Request("http://127.0.0.1/__debug/metrics/ABCDE"), {
+      ...env,
+      KARTSWAR_NETWORK_DIAGNOSTICS: "true",
+    }),
     200,
   );
 
