@@ -47,12 +47,13 @@ export interface PickupZone {
   y: number;
   kind: "weapon" | "health";
 }
-/** Environmental danger area (e.g. lava). Karts inside take damage per second. */
+/** Environmental danger area. Karts inside take damage per second. */
 export interface Hazard {
   x: number;
   z: number;
   r: number;
   dps: number;
+  kind?: "lava" | "water";
 }
 export interface Arena {
   half: number;

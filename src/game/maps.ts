@@ -6,9 +6,10 @@ import { buildCity } from "./maps/city";
 import { buildJungle } from "./maps/jungle";
 import { buildVolcano } from "./maps/volcano";
 import { buildSunbeam } from "./maps/sunbeam";
+import { buildAlpine } from "./maps/alpine";
 import { MAP_ID } from "./spawns";
 
-export type MapId = "neon" | "city" | "volcano" | "jungle" | "sunbeam";
+export type MapId = "neon" | "city" | "volcano" | "jungle" | "sunbeam" | "alpine";
 
 export interface MapEnv {
   bg: number;
@@ -84,6 +85,16 @@ export const MAPS: MapDef[] = [
     image: "/maps/sunbeam.svg",
     env: { bg: 0x9bdff3, exposure: 1.08, fog: [0xc6edf5, 150, 440], hemiSky: 0xc7f3ff, hemiGround: 0xb9a57c, hemi: 1.55, sun: 0xfff1cf, sunIntensity: 2.35 },
   },
+  {
+    id: "alpine",
+    name: "Alpine Combat Meadow",
+    tagline: "Fight across the foothills",
+    desc: "An open Alpine battle plain centered around a deep island lake, with natural plateau ramps, collision-backed rock formations, and evergreen forest.",
+    difficulty: "Medium",
+    traits: ["Open combat plain", "Natural hill ramps", "Island lake", "Evergreen forest"],
+    image: "/maps/alpine.svg",
+    env: { bg: 0xb5d2dc, exposure: 1.08, fog: [0xc4d8df, 145, 430], hemiSky: 0xd4efff, hemiGround: 0x53654d, hemi: 1.45, sun: 0xfff0d2, sunIntensity: 2.2 },
+  },
 ];
 
 export function isSupportedMultiplayerMap(id: string) {
@@ -112,6 +123,9 @@ export function buildMap(id: string, scene: THREE.Scene, quality: MapQuality): A
       break;
     case "sunbeam":
       arena = buildSunbeam(scene, quality);
+      break;
+    case "alpine":
+      arena = buildAlpine(scene, quality);
       break;
     case "neon":
     default:

@@ -10,13 +10,13 @@ interface Env {
 
 type RoomMode = "ffa" | "team";
 type RoomPhase = "lobby" | "countdown" | "playing" | "ended";
-type MapId = "neon" | "city" | "volcano" | "jungle" | "sunbeam";
+type MapId = "neon" | "city" | "volcano" | "jungle" | "sunbeam" | "alpine";
 type SnapshotState = Record<string, number | boolean | string | null>;
 
 const DEFAULT_MAP_ID: MapId = "neon";
 
 function isMapId(value: unknown): value is MapId {
-  return value === "neon" || value === "city" || value === "volcano" || value === "jungle" || value === "sunbeam";
+  return value === "neon" || value === "city" || value === "volcano" || value === "jungle" || value === "sunbeam" || value === "alpine";
 }
 
 interface TicketClaims {

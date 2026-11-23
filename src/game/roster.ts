@@ -47,7 +47,7 @@ export function modeFromCode(code: string): Mode {
 }
 
 export function mapFromCode(code: string): string {
-  const ids = ["neon", "city", "volcano", "jungle", "sunbeam"];
+  const ids = ["neon", "city", "volcano", "jungle", "sunbeam", "alpine"];
   return ids[hashString("map:" + code) % ids.length];
 }
 

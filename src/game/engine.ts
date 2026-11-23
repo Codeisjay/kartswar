@@ -2346,26 +2346,34 @@ export class Game {
   }
 
   // ------------------------------------------------------------------ pickups
-  /** Environmental hazards (lava): damage over time + burn particles. */
-  private lavaToastT = 0;
+  /** Environmental hazards apply damage and a matching player warning. */
+  private hazardToastT = 0;
   private updateHazards(dt: number) {
     const hazards = this.arena.hazards;
     if (!hazards || !hazards.length || this.phase !== "playing") return;
-    this.lavaToastT -= dt;
+    this.hazardToastT -= dt;
     for (const k of this.karts) {
       if (!k.alive || k.y > 1.2) continue;
       for (const h of hazards) {
         const dx = k.x - h.x;
         const dz = k.z - h.z;
         if (dx * dx + dz * dz > h.r * h.r) continue;
-        this.hurt(k, h.dps * dt, null, "Lava");
+        const water = h.kind === "water";
+        this.hurt(k, h.dps * dt, null, water ? "Drowning" : "Lava");
         if (this.rng() < dt * 20) {
           this.fx.add.emit(k.x + (this.rng() - 0.5) * 2, k.y + 0.6, k.z + (this.rng() - 0.5) * 2,
-            (this.rng() - 0.5) * 2, 3 + this.rng() * 3, (this.rng() - 0.5) * 2, 0.4, 1.2, 0.15, 0xffc060, 0xff3a05, -6, 1);
+            (this.rng() - 0.5) * 2, water ? 2 + this.rng() * 2 : 3 + this.rng() * 3,
+            (this.rng() - 0.5) * 2, 0.4, 1.2, 0.15,
+            water ? 0xb9f7ff : 0xffc060, water ? 0x278fa0 : 0xff3a05, water ? -0.5 : -6, 1);
         }
-        if (k.isPlayer && this.lavaToastT <= 0) {
-          this.lavaToastT = 3;
-          this.cb.onEvent({ type: "banner", text: "LAVA!", sub: "Get back on solid ground", color: "#ff5a10" });
+        if (k.isPlayer && this.hazardToastT <= 0) {
+          this.hazardToastT = 3;
+          this.cb.onEvent({
+            type: "banner",
+            text: water ? "DROWNING!" : "LAVA!",
+            sub: water ? "Get back to dry land" : "Get back on solid ground",
+            color: water ? "#4edced" : "#ff5a10",
+          });
         }
         break;
       }
