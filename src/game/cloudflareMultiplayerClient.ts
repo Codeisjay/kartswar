@@ -55,10 +55,10 @@ function randomToken(): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function identityFor(code: string): ResumeIdentity {
+export function identityFor(code: string, storage: Pick<Storage, "getItem" | "setItem"> = window.sessionStorage): ResumeIdentity {
   const key = `${RESUME_KEY_PREFIX}${code}`;
   try {
-    const saved = window.localStorage.getItem(key);
+    const saved = storage.getItem(key);
     if (saved) {
       const identity: unknown = JSON.parse(saved);
       if (
@@ -72,7 +72,7 @@ function identityFor(code: string): ResumeIdentity {
   }
   const identity = { playerId: crypto.randomUUID(), resumeToken: randomToken() };
   try {
-    window.localStorage.setItem(key, JSON.stringify(identity));
+    storage.setItem(key, JSON.stringify(identity));
   } catch (error) {
     console.warn("Room re-entry identity could not be saved to local storage.", error);
   }
