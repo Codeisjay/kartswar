@@ -131,6 +131,11 @@ async function main() {
   const secondPlayer = { playerId: randomUUID(), resumeToken: randomBytes(24).toString("hex"), name: "Cloud B" };
   const first = await connectCloudflare(firstPlayer, "create");
   let second = await connectCloudflare(secondPlayer, "join");
+  const firstMapUpdate = waitForMessage(first.socket, (message) => message.t === "l" && message.state.mapId === "city", 5_000, "host map selection");
+  const secondMapUpdate = waitForMessage(second.socket, (message) => message.t === "l" && message.state.mapId === "city", 5_000, "guest map update");
+  first.socket.send(JSON.stringify({ t: "map", mapId: "city" }));
+  await Promise.all([firstMapUpdate, secondMapUpdate]);
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
   const snapshotAges = [];
   const snapshotTimes = [];
   const snapshotSequences = [];
@@ -178,6 +183,7 @@ async function main() {
     const matchStart = waitForMessage(second.socket, (message) => message.t === "m", 10_000, "match start");
     first.socket.send(JSON.stringify({ t: "start" }));
     const match = await matchStart;
+    if (match.match.mapId !== "city") throw new Error("The selected map was not included in match start.");
     const playingAt = match.match.startAt;
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, playingAt - Date.now()) + 100));
 
@@ -234,6 +240,7 @@ async function main() {
     await new Promise((resolve) => setTimeout(resolve, 200));
     second = await connectCloudflare(secondPlayer, "join");
     if (second.welcome.playerId !== secondPlayer.playerId) throw new Error("Reconnect did not retain the player identity.");
+    if (second.welcome.state.mapId !== "city") throw new Error("Reconnect did not restore the selected room map.");
     const resumedSnapshot = second.welcome.initialSnapshots?.players.find((snapshot) => snapshot.playerId === secondPlayer.playerId);
     if (resumedSnapshot?.x !== 40) throw new Error("Reconnect did not restore the player's latest snapshot.");
     const ended = waitForMessage(second.socket, (message) => message.t === "l" && message.state.phase === "ended", 10_000, "match ended state");
@@ -257,6 +264,7 @@ async function main() {
       reverseSynchronizedPosition: 40,
       weaponFiringEventRelayed: true,
       reconnectPlayerIdPreserved: second.welcome.playerId === secondPlayer.playerId,
+      selectedMapPersistedOnReconnect: second.welcome.state.mapId === "city",
       reconnectSnapshotRestored: resumedSnapshot.x === 40,
       matchRestarted: true,
       multipleRoomsIsolated: true,

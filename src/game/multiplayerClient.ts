@@ -31,6 +31,7 @@ export interface MultiplayerSession {
   onRoomError(listener: (message: string) => void): () => void;
   createGameConfig(match: MatchStart): NetworkGameConfig;
   setReady(ready: boolean): void;
+  setMap?(mapId: string): void;
   requestStart(): void;
   requestRestart(): void;
   finishMatch(matchId: string): void;

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { audio } from "@/game/audio";
+import { MAPS } from "@/game/maps";
 import { createRoom, joinQuickMatch, joinRoom, type MultiplayerSession } from "@/game/multiplayerClient";
 import { TEAM_COLORS, type Profile } from "@/game/types";
 import type { LobbyState, NetworkPlayer } from "@/game/networkTypes";
@@ -110,6 +111,7 @@ export default function Lobby({ profile, onSession, onBack }: Props) {
   const isRoom = !!lobby;
   const canReady = !!lobby && lobby.phase === "lobby" && !!self && !self.host;
   const canStart = !!lobby && lobby.phase === "lobby" && isHost && allReady;
+  const canChooseMap = !!lobby && lobby.phase === "lobby" && isHost;
 
   return (
     <div className="absolute inset-0 z-10 flex flex-col overflow-y-auto p-4 sm:p-8">
@@ -206,6 +208,25 @@ export default function Lobby({ profile, onSession, onBack }: Props) {
                     <button className="kw-chip mt-1 px-3 py-1 text-xs" onClick={() => void copy()}>
                       {copied ? "✔ Copied" : "Copy code"}
                     </button>
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs uppercase tracking-widest text-slate-400">Choose map</div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {MAPS.map((map) => (
+                        <button
+                          key={map.id}
+                          type="button"
+                          disabled={!canChooseMap}
+                          aria-pressed={lobby.mapId === map.id}
+                          className={`kw-chip min-h-14 bg-cover bg-center px-2 py-2 text-xs font-bold disabled:cursor-not-allowed ${lobby.mapId === map.id ? "active" : ""}`}
+                          style={{ backgroundImage: `linear-gradient(#08091dcc, #08091dcc), url("${map.image}")` }}
+                          onClick={() => sessionRef.current?.setMap?.(map.id)}
+                        >
+                          {map.name}
+                        </button>
+                      ))}
+                    </div>
+                    {!isHost && <div className="mt-1 text-center text-xs text-slate-400">The host chooses the map.</div>}
                   </div>
                   <button className="kw-btn w-full" disabled={!canStart} onClick={() => sessionRef.current?.requestStart()}>
                     <span>▶ Start Match</span>

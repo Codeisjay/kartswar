@@ -1,4 +1,4 @@
-import { getSpawnPoints, MAP_ID } from "../../src/game/spawns";
+import { getSpawnPoints } from "../../src/game/spawns";
 import type { JoinState, LobbyState, MatchStart, NetworkPlayer, PlayerSnapshot, SnapshotFrame } from "../../src/game/networkTypes";
 
 interface Env {
@@ -10,7 +10,14 @@ interface Env {
 
 type RoomMode = "ffa" | "team";
 type RoomPhase = "lobby" | "countdown" | "playing" | "ended";
+type MapId = "neon" | "city" | "volcano" | "jungle";
 type SnapshotState = Record<string, number | boolean | string | null>;
+
+const DEFAULT_MAP_ID: MapId = "neon";
+
+function isMapId(value: unknown): value is MapId {
+  return value === "neon" || value === "city" || value === "volcano" || value === "jungle";
+}
 
 interface TicketClaims {
   v: 1;
@@ -51,6 +58,7 @@ interface SnapshotRateLimitBucket {
 interface PersistedRoom {
   code: string;
   mode: RoomMode;
+  mapId?: MapId;
   phase: RoomPhase;
   matchId: string | null;
   startAt: number | null;
@@ -255,6 +263,7 @@ export class KartRoom {
   private readonly ready: Promise<void>;
   private code = "";
   private mode: RoomMode = "ffa";
+  private mapId: MapId = DEFAULT_MAP_ID;
   private phase: RoomPhase = "lobby";
   private matchId: string | null = null;
   private startAt: number | null = null;
@@ -280,6 +289,7 @@ export class KartRoom {
       if (!saved) return;
       this.code = saved.code;
       this.mode = saved.mode;
+      this.mapId = isMapId(saved.mapId) ? saved.mapId : DEFAULT_MAP_ID;
       this.phase = saved.phase;
       this.matchId = saved.matchId;
       this.startAt = saved.startAt;
@@ -374,6 +384,26 @@ export class KartRoom {
           await this.persist();
           this.publishLobby();
           await this.scheduleAlarm();
+        }
+        break;
+      case "map":
+        if (!this.takeControlSlot(socket, attachment)) return;
+        if (player.playerId !== this.hostPlayerId) {
+          safeSend(socket, { t: "e", message: "Only the host can choose the room map." });
+          return;
+        }
+        if (this.phase !== "lobby") {
+          safeSend(socket, { t: "e", message: "The map can only be changed before the match starts." });
+          return;
+        }
+        if (!isMapId(message.mapId)) {
+          safeSend(socket, { t: "e", message: "Choose a valid map." });
+          return;
+        }
+        if (this.mapId !== message.mapId) {
+          this.mapId = message.mapId;
+          await this.persist();
+          this.publishLobby();
         }
         break;
       case "start":
@@ -673,7 +703,7 @@ export class KartRoom {
   private matchStart(): MatchStart {
     return {
       matchId: this.matchId ?? "",
-      mapId: MAP_ID,
+      mapId: this.mapId,
       mode: this.mode,
       startAt: this.startAt ?? Date.now(),
       players: [...this.members.values()].filter((member) => member.connected).map((member) => this.publicPlayer(member)),
@@ -691,7 +721,7 @@ export class KartRoom {
       hostPlayerId: this.hostPlayerId,
       players: [...this.members.values()].map((member) => this.publicPlayer(member)),
       matchId: this.matchId,
-      mapId: MAP_ID,
+      mapId: this.mapId,
       startAt: this.startAt,
     };
   }
@@ -870,6 +900,7 @@ export class KartRoom {
     const room: PersistedRoom = {
       code: this.code,
       mode: this.mode,
+      mapId: this.mapId,
       phase: this.phase,
       matchId: this.matchId,
       startAt: this.startAt,

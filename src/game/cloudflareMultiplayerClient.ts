@@ -303,6 +303,10 @@ class CloudflareMultiplayerSession implements MultiplayerSession {
     this.send({ t: "ready", ready });
   }
 
+  setMap(mapId: string) {
+    this.send({ t: "map", mapId });
+  }
+
   requestStart() {
     this.send({ t: "start" });
   }
