@@ -5,6 +5,7 @@ import type { MapQuality } from "./maps/common";
 import { buildCity } from "./maps/city";
 import { buildJungle } from "./maps/jungle";
 import { buildVolcano } from "./maps/volcano";
+import { MAP_ID } from "./spawns";
 
 export type MapId = "neon" | "city" | "volcano" | "jungle";
 
@@ -73,6 +74,10 @@ export const MAPS: MapDef[] = [
     env: { bg: 0x0a2018, exposure: 1.14, fog: [0x143024, 90, 300], hemiSky: 0xaaffcc, hemiGround: 0x2a4a2a, hemi: 1.15, sun: 0xfff2c0, sunIntensity: 2.05 },
   },
 ];
+
+export function isSupportedMultiplayerMap(id: string) {
+  return id === MAP_ID || MAPS.some((map) => map.id === id);
+}
 
 export function mapDef(id: string): MapDef {
   return MAPS.find((m) => m.id === id) ?? MAPS[0];

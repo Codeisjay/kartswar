@@ -4,7 +4,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { createPickupMesh, disposeScene, surfaceHeight, type Arena, type Circle, type PickupZone } from "./arena";
-import { buildMap, mapDef } from "./maps";
+import { buildMap, isSupportedMultiplayerMap, mapDef } from "./maps";
 import { RoomNet, type KartState, type NetEvent, type NetPlayer, type NetRoom } from "./net";
 import { mulberry32 } from "./maps/common";
 
@@ -33,7 +33,6 @@ import { buildKart, disposeRig, type KartRig } from "./karts";
 import { Effects } from "./effects";
 import { audio, type SfxName } from "./audio";
 import { newBotState, updateBot, type BotState } from "./ai";
-import { MAP_ID } from "./spawns";
 import { RemoteSnapshotBuffer } from "./remoteInterpolation";
 import { NetworkDiagnostics } from "./networkDiagnostics";
 import { NetworkSnapshotScheduler } from "./networkSnapshotScheduler";
@@ -529,7 +528,7 @@ export class Game {
   private setupKarts() {
     const cfg = this.cfg;
     if (cfg.network) {
-      if (cfg.network.mapId !== MAP_ID) throw new Error(`Unsupported multiplayer map: ${cfg.network.mapId}`);
+      if (!isSupportedMultiplayerMap(cfg.network.mapId)) throw new Error(`Unsupported multiplayer map: ${cfg.network.mapId}`);
       const roster = cfg.network.players.slice().sort((a, b) => a.slot - b.slot);
       const own = roster.find((player) => player.playerId === cfg.network!.playerId);
       if (!own) throw new Error("The room did not assign this client a player slot.");
