@@ -1,4 +1,5 @@
 import { DEFAULT_PROFILE, DEFAULT_SETTINGS, type Mode, type Profile, type Settings } from "./types";
+import { calculateMatchCredits, PAINT_SKINS, WHEEL_STYLES } from "./cosmetics";
 
 const K_SETTINGS = "kw_settings_v1";
 const K_PROFILE = "kw_profile_v1";
@@ -108,12 +109,36 @@ export function getServerSettingsSnapshot() {
   return DEFAULT_SETTINGS;
 }
 export function loadProfile(): Profile {
-  return { ...DEFAULT_PROFILE, ...read<Partial<Profile>>(K_PROFILE, {}) };
+  const saved = read<Partial<Profile>>(K_PROFILE, {});
+  const ownedPaints = Array.isArray(saved.ownedPaints)
+    ? [...new Set(saved.ownedPaints.filter((id) => PAINT_SKINS.some((skin) => skin.id === id)))]
+    : [...DEFAULT_PROFILE.ownedPaints];
+  if (!ownedPaints.includes("factory")) ownedPaints.push("factory");
+  const ownedWheelStyles = Array.isArray(saved.ownedWheelStyles)
+    ? [...new Set(saved.ownedWheelStyles.filter((id) => WHEEL_STYLES.some((style) => style.id === id)))]
+    : [...DEFAULT_PROFILE.ownedWheelStyles];
+  if (!ownedWheelStyles.includes("stock")) ownedWheelStyles.push("stock");
+  const profile = { ...DEFAULT_PROFILE, ...saved };
+  const credits = saved.credits;
+  return {
+    ...profile,
+    credits: typeof credits === "number" && Number.isSafeInteger(credits) && credits >= 0 ? credits : 0,
+    ownedPaints,
+    paintId: ownedPaints.includes(profile.paintId) ? profile.paintId : "factory",
+    ownedWheelStyles,
+    wheelStyle: ownedWheelStyles.includes(profile.wheelStyle) ? profile.wheelStyle : "stock",
+  };
 }
 export function saveProfile(p: Profile) {
   profileSnapshot = { ...p };
   write(K_PROFILE, p);
   notify(profileListeners);
+}
+export function awardMatchCredits(score: number, won: boolean) {
+  const reward = calculateMatchCredits(score, won);
+  const profile = loadProfile();
+  saveProfile({ ...profile, credits: Math.min(Number.MAX_SAFE_INTEGER, profile.credits + reward) });
+  return reward;
 }
 export function subscribeProfile(listener: () => void) {
   return subscribeStorageStore(profileListeners, listener, onProfileStorage);

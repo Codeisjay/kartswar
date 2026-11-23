@@ -91,9 +91,24 @@ export interface Profile {
   avatar: string;
   kartId: number;
   glow: number;
+  credits: number;
+  paintId: string;
+  ownedPaints: string[];
+  wheelStyle: string;
+  ownedWheelStyles: string[];
 }
 
-export const DEFAULT_PROFILE: Profile = { name: "Driver", avatar: "😎", kartId: 0, glow: 0xff6a00 };
+export const DEFAULT_PROFILE: Profile = {
+  name: "Driver",
+  avatar: "😎",
+  kartId: 0,
+  glow: 0xff6a00,
+  credits: 0,
+  paintId: "factory",
+  ownedPaints: ["factory"],
+  wheelStyle: "stock",
+  ownedWheelStyles: ["stock"],
+};
 
 export interface RosterEntry {
   name: string;

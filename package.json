@@ -14,6 +14,7 @@
     "test:cloudflare-snapshot-delta": "tsx src/game/cloudflareSnapshotDelta.test.ts",
     "test:cloudflare-multiplayer-identity": "tsx src/game/cloudflareMultiplayerIdentity.test.ts",
     "test:multiplayer-maps": "tsx src/game/maps.test.ts",
+    "test:cosmetics": "tsx src/game/cosmetics.test.ts",
     "multiplayer:measure": "node multiplayer/network-measurement.mjs",
     "multiplayer:measure:browser": "node multiplayer/browser-network-measurement.mjs",
     "build": "next build",

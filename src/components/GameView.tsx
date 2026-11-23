@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Game } from "@/game/engine";
-import { addScore, loadScores, type ScoreEntry } from "@/game/storage";
+import { addScore, awardMatchCredits, loadScores, type ScoreEntry } from "@/game/storage";
 import { saveTutorialProgress } from "@/game/storage";
 import { TEAM_COLORS, WEAPONS, type GameConfig, type GameEvent, type HudState, type KillEntry, type MatchResult, type NetworkSeat, type TutorialState } from "@/game/types";
 import TouchControls from "./TouchControls";
@@ -38,7 +38,7 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
   const [paused, setPaused] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [vol, setVol] = useState(cfg.settings.master);
-  const [result, setResult] = useState<{ r: MatchResult; scores: ScoreEntry[]; rank: number } | null>(null);
+  const [result, setResult] = useState<{ r: MatchResult; scores: ScoreEntry[]; rank: number; creditsEarned: number } | null>(null);
   const [bestBefore, setBestBefore] = useState(0);
   const [pressedKeys, setPressedKeys] = useState<Set<string>>(() => new Set());
   const [tutorialStep, setTutorialStep] = useState(cfg.tutorialStep ?? 0);
@@ -94,7 +94,8 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
         }
         const entry: ScoreEntry = { name: cfg.profile.name || "Driver", avatar: cfg.profile.avatar, score: r.score, kills: r.kills, mode: r.mode, date: Date.now(), wave: r.mode === "survival" ? r.wave : undefined };
         const { scores, rank } = addScore(entry);
-        setResult({ r, scores, rank });
+        const creditsEarned = awardMatchCredits(r.score, r.win);
+        setResult({ r, scores, rank, creditsEarned });
       },
       onNetworkCountdown: setRestartStartAt,
       onNetworkRestart: (seed, startAt, players) => onRestart({ seed, startAt, players }),
@@ -537,10 +538,11 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
               {(restartError || networkError) && <div className="mt-3 rounded-lg bg-red-500/15 px-3 py-2 text-center text-sm text-red-200">{restartError || networkError}</div>}
               {restartCountdown !== null && <div className="mt-3 text-center text-sm uppercase tracking-[0.3em] text-cyan-200">Match starts in {restartCountdown}</div>}
             </div>
-            <div className="mt-5 grid grid-cols-3 gap-3 text-center">
+            <div className="mt-5 grid grid-cols-2 gap-3 text-center sm:grid-cols-4">
               <Stat label="Score" value={result.r.score.toLocaleString()} accent />
               <Stat label="Eliminations" value={String(result.r.kills)} />
               <Stat label="Deaths" value={String(result.r.deaths)} />
+              <Stat label="Credits earned" value={`+${result.creditsEarned}`} accent />
             </div>
             {result.r.score > bestBefore && result.r.score > 0 && <div className="mt-3 animate-pulse text-center text-lg font-bold text-yellow-300">🏆 NEW PERSONAL BEST!</div>}
             <div className="mt-5 grid gap-4 md:grid-cols-2">

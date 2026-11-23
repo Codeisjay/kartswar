@@ -16,6 +16,7 @@ export interface KartRig {
 }
 
 let glowTex: THREE.Texture | null = null;
+const avatarTextures = new Map<string, THREE.Texture>();
 export function getGlowTexture(): THREE.Texture {
   if (glowTex) return glowTex;
   const c = document.createElement("canvas");
@@ -30,6 +31,22 @@ export function getGlowTexture(): THREE.Texture {
   glowTex = new THREE.CanvasTexture(c);
   glowTex.colorSpace = THREE.SRGBColorSpace;
   return glowTex;
+}
+
+function getAvatarTexture(avatar: string): THREE.Texture {
+  const cached = avatarTextures.get(avatar);
+  if (cached) return cached;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 128;
+  const context = canvas.getContext("2d")!;
+  context.font = "112px sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(avatar, 64, 66);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  avatarTextures.set(avatar, texture);
+  return texture;
 }
 
 function numberTexture(num: string, bg: string): THREE.Texture {
@@ -56,8 +73,10 @@ const torusGeo = new THREE.TorusGeometry(1, 0.12, 6, 20);
 
 export interface BuildOpts {
   primary?: number;
+  accent?: number;
   glow?: number;
-  helmet?: number;
+  avatar?: string;
+  wheelStyle?: string;
 }
 
 export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
@@ -82,11 +101,18 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
   const flames: THREE.Mesh[] = [];
 
   const primaryMat = std(primary, { roughness: 0.35, metalness: 0.35 });
-  const accentMat = std(preset.accent, { roughness: 0.4 });
+  const accentMat = std(opts.accent ?? preset.accent, { roughness: 0.4 });
   const darkMat = std(0x15171d, { roughness: 0.8, metalness: 0.1 });
   const tireMat = std(0x0e0e10, { roughness: 0.95, metalness: 0 });
   const metalMat = std(0xb9c0cc, { roughness: 0.25, metalness: 0.8 });
   const glowMat = basic(glow);
+  const wheelStyleMat = opts.wheelStyle === "gold"
+    ? std(0xffc33b, { roughness: 0.22, metalness: 0.85 })
+    : opts.wheelStyle === "neon"
+      ? basic(0x35f0ff)
+      : opts.wheelStyle === "chrome"
+        ? std(0xdce5f2, { roughness: 0.16, metalness: 0.95 })
+        : null;
   const bodyMats = [primaryMat];
 
   const add = (geo: THREE.BufferGeometry, mat: THREE.Material, p: [number, number, number], s: [number, number, number], parent: THREE.Object3D = body) => {
@@ -109,7 +135,7 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
     tire.scale.set(r, w, r);
     tire.castShadow = true;
     spin.add(tire);
-    const hub = new THREE.Mesh(cylGeo, rimMat);
+    const hub = new THREE.Mesh(cylGeo, wheelStyleMat ?? rimMat);
     hub.rotation.z = Math.PI / 2;
     hub.scale.set(r * 0.62, w * 1.04, r * 0.62);
     spin.add(hub);
@@ -118,10 +144,21 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
   };
 
   const driver = (y: number, z: number) => {
-    const helmetMat = std(opts.helmet ?? 0xf2f2f2, { roughness: 0.3 });
     add(boxGeo, std(0x2a2f3d), [0, y - 0.2, z], [0.55, 0.5, 0.35]);
-    add(sphereGeo, helmetMat, [0, y + 0.3, z + 0.02], [0.3, 0.3, 0.3]);
-    add(boxGeo, basic(0x111111), [0, y + 0.32, z + 0.22], [0.42, 0.13, 0.12]);
+    const faceMaterial = new THREE.SpriteMaterial({
+      map: getAvatarTexture(opts.avatar ?? "😎"),
+      transparent: true,
+      alphaTest: 0.05,
+      depthWrite: false,
+      depthTest: false,
+      toneMapped: false,
+    });
+    owned.push(faceMaterial);
+    const face = new THREE.Sprite(faceMaterial);
+    face.position.set(0, y + 0.3, z + 0.02);
+    face.scale.set(0.68, 0.68, 1);
+    face.renderOrder = 2;
+    body.add(face);
   };
 
   const flame = (x: number, y: number, z: number) => {
@@ -196,7 +233,7 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
       const px = Math.cos(a) * 1.15;
       const pz = Math.sin(a) * 1.15;
       add(cylGeo, darkMat, [px, 0.35, pz], [0.28, 0.18, 0.28]);
-      add(cylGeo, glowMat, [px, 0.24, pz], [0.2, 0.03, 0.2]);
+      add(cylGeo, wheelStyleMat ?? glowMat, [px, 0.24, pz], [0.2, 0.03, 0.2]);
     }
     const ring = new THREE.Mesh(torusGeo, glowMat);
     ring.rotation.x = Math.PI / 2;

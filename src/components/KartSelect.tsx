@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { buildKart, disposeRig, type KartRig } from "@/game/karts";
 import { AVATARS, GLOW_SWATCHES, KART_PRESETS, type Profile } from "@/game/types";
+import { buyCosmetic, getPaintSkin, getWheelStyle, PAINT_SKINS, WHEEL_STYLES } from "@/game/cosmetics";
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 
-function KartPreview({ kartId, glow }: { kartId: number; glow: number }) {
+function KartPreview({ profile }: { profile: Profile }) {
   const ref = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const rigRef = useRef<KartRig | null>(null);
@@ -79,13 +80,21 @@ function KartPreview({ kartId, glow }: { kartId: number; glow: number }) {
   useEffect(() => {
     const scene = sceneRef.current;
     if (!scene) return;
+    const preset = KART_PRESETS[profile.kartId] ?? KART_PRESETS[0];
+    const paint = getPaintSkin(profile.paintId);
     let rot = 0.6;
     if (rigRef.current) {
       rot = rigRef.current.group.rotation.y;
       scene.remove(rigRef.current.group);
       disposeRig(rigRef.current);
     }
-    const rig = buildKart(KART_PRESETS[kartId] ?? KART_PRESETS[0], { glow, helmet: 0xffffff });
+    const rig = buildKart(preset, {
+      primary: paint.primary ?? undefined,
+      accent: paint.accent ?? undefined,
+      glow: profile.glow,
+      avatar: profile.avatar,
+      wheelStyle: profile.wheelStyle,
+    });
     rig.group.rotation.y = rot;
     rig.group.scale.setScalar(1.15);
     rig.group.traverse((o) => {
@@ -93,7 +102,7 @@ function KartPreview({ kartId, glow }: { kartId: number; glow: number }) {
     });
     scene.add(rig.group);
     rigRef.current = rig;
-  }, [kartId, glow]);
+  }, [profile.kartId, profile.glow, profile.avatar, profile.paintId, profile.wheelStyle]);
 
   return <div ref={ref} className="h-full w-full" />;
 }
@@ -111,7 +120,22 @@ function Bar({ label, value }: { label: string; value: number }) {
 }
 
 export default function KartSelect({ profile, onChange, onBack }: { profile: Profile; onChange: (p: Profile) => void; onBack: () => void }) {
+  const [shopMessage, setShopMessage] = useState("");
   const preset = KART_PRESETS[profile.kartId] ?? KART_PRESETS[0];
+  const buyOrEquip = (id: string, owned: boolean, type: "paint" | "wheel") => {
+    if (owned) {
+      onChange(type === "paint" ? { ...profile, paintId: id } : { ...profile, wheelStyle: id });
+      setShopMessage("");
+      return;
+    }
+    const updated = buyCosmetic(profile, id);
+    if (!updated) {
+      setShopMessage("Not enough credits for that cosmetic.");
+      return;
+    }
+    onChange(updated);
+    setShopMessage("Cosmetic unlocked and equipped!");
+  };
   return (
     <div className="absolute inset-0 z-10 flex flex-col overflow-y-auto p-4 sm:p-8">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between">
@@ -122,10 +146,10 @@ export default function KartSelect({ profile, onChange, onBack }: { profile: Pro
       </div>
       <div className="mx-auto mt-4 grid w-full max-w-6xl flex-1 gap-5 lg:grid-cols-[1.2fr_1fr]">
         <div className="kw-panel relative min-h-[320px] overflow-hidden">
-          <KartPreview kartId={profile.kartId} glow={profile.glow} />
+          <KartPreview profile={profile} />
           <div className="pointer-events-none absolute bottom-4 left-5">
             <div className="kw-display text-4xl text-white">{preset.name}</div>
-            <div className="text-sm text-slate-300">{preset.tagline}</div>
+            <div className="text-sm text-slate-300">{preset.tagline} · {getPaintSkin(profile.paintId).name} · {getWheelStyle(profile.wheelStyle).name}</div>
           </div>
           <div className="absolute right-4 top-4 w-44 space-y-1.5 rounded-lg bg-black/40 p-3">
             <Bar label="Speed" value={preset.speed} />
@@ -134,6 +158,16 @@ export default function KartSelect({ profile, onChange, onBack }: { profile: Pro
           </div>
         </div>
         <div className="space-y-4">
+          <div className="kw-panel p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-widest text-slate-400">Credits</div>
+                <div className="kw-display text-3xl text-yellow-200">{profile.credits.toLocaleString()} <span className="text-xl">🪙</span></div>
+              </div>
+              <div className="max-w-40 text-right text-xs text-slate-400">Earn credits by scoring. Wallet is saved in this browser.</div>
+            </div>
+            {shopMessage && <div role="status" className="mt-2 text-xs text-cyan-200">{shopMessage}</div>}
+          </div>
           <div className="kw-panel p-4">
             <div className="mb-2 text-xs uppercase tracking-widest text-slate-400">Choose kart</div>
             <div className="grid grid-cols-3 gap-2">
@@ -151,6 +185,61 @@ export default function KartSelect({ profile, onChange, onBack }: { profile: Pro
                   <div className="text-[10px] uppercase text-slate-400">{k.shape}</div>
                 </button>
               ))}
+            </div>
+          </div>
+          <div className="kw-panel p-4">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="text-xs uppercase tracking-widest text-slate-400">Paint shop</div>
+              <span className="text-xs text-slate-500">Visual only</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {PAINT_SKINS.map((skin) => {
+                const owned = profile.ownedPaints.includes(skin.id);
+                const equipped = profile.paintId === skin.id;
+                return (
+                  <div key={skin.id} className="rounded-lg border border-white/10 bg-black/20 p-2">
+                    <div className="mb-2 flex items-center gap-2">
+                      <span className="h-5 w-8 rounded" style={{ background: hex(skin.primary ?? preset.primary) }} />
+                      <span className="h-5 w-5 rounded" style={{ background: hex(skin.accent ?? preset.accent) }} />
+                      <span className="truncate text-xs font-bold">{skin.name}</span>
+                    </div>
+                    <button
+                      className="kw-chip w-full py-1 text-xs"
+                      disabled={equipped || (!owned && profile.credits < skin.price)}
+                      onClick={() => buyOrEquip(skin.id, owned, "paint")}
+                    >
+                      {equipped ? "Equipped" : owned ? "Equip" : `Unlock · ${skin.price} 🪙`}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <div className="kw-panel p-4">
+            <div className="mb-2 text-xs uppercase tracking-widest text-slate-400">Wheel finishes</div>
+            <div className="grid grid-cols-2 gap-2">
+              {WHEEL_STYLES.map((style) => {
+                const owned = profile.ownedWheelStyles.includes(style.id);
+                const equipped = profile.wheelStyle === style.id;
+                return (
+                  <div key={style.id} className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 p-2">
+                    <span
+                      className="h-6 w-6 shrink-0 rounded-full border-4 border-slate-800"
+                      style={{ background: hex(style.rimColor ?? preset.accent) }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-bold">{style.name}</div>
+                      <button
+                        className="kw-chip mt-1 w-full py-1 text-xs"
+                        disabled={equipped || (!owned && profile.credits < style.price)}
+                        onClick={() => buyOrEquip(style.id, owned, "wheel")}
+                      >
+                        {equipped ? "Equipped" : owned ? "Equip" : `Unlock · ${style.price} 🪙`}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
           <div className="kw-panel p-4">

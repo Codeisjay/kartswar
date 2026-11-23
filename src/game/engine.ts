@@ -36,6 +36,7 @@ import { newBotState, updateBot, type BotState } from "./ai";
 import { RemoteSnapshotBuffer } from "./remoteInterpolation";
 import { NetworkDiagnostics } from "./networkDiagnostics";
 import { NetworkSnapshotScheduler } from "./networkSnapshotScheduler";
+import { getPaintSkin } from "./cosmetics";
 import {
   BOT_NAMES, KART_PRESETS, TEAM_COLORS, WEAPONS, WEAPON_IDS,
   type GameCallbacks, type GameConfig, type HudRow, type HudState, type KartPreset, type MatchResult, type TutorialState,
@@ -532,10 +533,16 @@ export class Game {
       const roster = cfg.network.players.slice().sort((a, b) => a.slot - b.slot);
       const own = roster.find((player) => player.playerId === cfg.network!.playerId);
       if (!own) throw new Error("The room did not assign this client a player slot.");
+      const paint = getPaintSkin(cfg.profile.paintId);
+      const preset = KART_PRESETS[own.kartId] ?? KART_PRESETS[0];
       const player = this.makeKart({
         name: own.displayName,
         avatar: own.avatar,
-        preset: KART_PRESETS[own.kartId] ?? KART_PRESETS[0],
+        preset,
+        primary: paint.primary ?? preset.primary,
+        accent: paint.accent ?? preset.accent,
+        glow: cfg.profile.glow,
+        wheelStyle: cfg.profile.wheelStyle,
         isPlayer: true,
         team: own.team,
         skill: 1,
@@ -554,7 +561,21 @@ export class Game {
     const mode = cfg.mode;
     const spawnOrder = this.shuffle([...this.arena.spawns.keys()]);
     const playerTeam = mode === "team" ? (cfg.net ? cfg.net.slot % 2 : 0) : mode === "survival" ? 0 : -1;
-    const p = this.makeKart({ name: cfg.profile.name || "Driver", avatar: cfg.profile.avatar, preset: KART_PRESETS[cfg.profile.kartId] ?? KART_PRESETS[0], glow: cfg.profile.glow, isPlayer: true, team: playerTeam, skill: 1, spawnSlot: cfg.net?.slot ?? null });
+    const preset = KART_PRESETS[cfg.profile.kartId] ?? KART_PRESETS[0];
+    const paint = getPaintSkin(cfg.profile.paintId);
+    const p = this.makeKart({
+      name: cfg.profile.name || "Driver",
+      avatar: cfg.profile.avatar,
+      preset,
+      primary: paint.primary ?? preset.primary,
+      accent: paint.accent ?? preset.accent,
+      glow: cfg.profile.glow,
+      wheelStyle: cfg.profile.wheelStyle,
+      isPlayer: true,
+      team: playerTeam,
+      skill: 1,
+      spawnSlot: cfg.net?.slot ?? null,
+    });
     this.player = p;
     this.placeKart(p, cfg.net ? cfg.net.slot : spawnOrder[0]);
     if (mode === "survival") {
@@ -662,12 +683,14 @@ export class Game {
     }
   }
 
-  private makeKart(o: { name: string; avatar: string; preset: KartPreset; glow?: number; isPlayer: boolean; team: number; skill: number; enemyGlow?: boolean; networkId?: string; isRemote?: boolean; remoteId?: string; tutorialTarget?: boolean; spawnSlot?: number | null }): Kart {
+  private makeKart(o: { name: string; avatar: string; preset: KartPreset; primary?: number; accent?: number; glow?: number; wheelStyle?: string; isPlayer: boolean; team: number; skill: number; enemyGlow?: boolean; networkId?: string; isRemote?: boolean; remoteId?: string; tutorialTarget?: boolean; spawnSlot?: number | null }): Kart {
     const teamColor = o.team >= 0 && this.mode === "team" ? TEAM_COLORS[o.team] : undefined;
     const rig = buildKart(o.preset, {
-      primary: teamColor,
+      primary: teamColor ?? o.primary,
+      accent: teamColor ?? o.accent,
       glow: teamColor ?? (o.enemyGlow ? 0xff3a4a : o.glow),
-      helmet: o.isPlayer ? 0xffffff : [0xf2f2f2, 0xffd21f, 0x35f0ff, 0xff8aa8, 0x9dff3a][Math.floor(Math.random() * 5)],
+      avatar: o.avatar,
+      wheelStyle: o.wheelStyle,
     });
     this.scene.add(rig.group);
     rig.group.traverse((m) => {
