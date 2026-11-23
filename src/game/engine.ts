@@ -94,6 +94,9 @@ export interface Kart {
   grounded: boolean;
   slopeVy: number;
   steerCur: number;
+  driverSpeed: number;
+  driverHeading: number;
+  deathAnimT: number;
   pitch: number;
   roll: number;
   speedF: number;
@@ -134,12 +137,15 @@ export interface NetKartState {
   y: number;
   z: number;
   vx: number;
+  vy: number;
   vz: number;
   heading: number;
   pitch: number;
   roll: number;
   boosting: boolean;
   drifting: boolean;
+  grounded: boolean;
+  firing: boolean;
   driftDir: number;
   aimX: number;
   aimZ: number;
@@ -696,6 +702,9 @@ export class Game {
     rig.group.traverse((m) => {
       if ((m as THREE.Mesh).isMesh) m.receiveShadow = false;
     });
+    rig.driver.group.traverse((object) => {
+      if (object instanceof THREE.Mesh) object.castShadow = false;
+    });
     const turret = buildTurret();
     turret.group.visible = false;
     rig.group.add(turret.group);
@@ -718,7 +727,8 @@ export class Game {
       remoteSnapshots: new RemoteSnapshotBuffer(), remoteWasExtrapolating: false,
       remoteCorrectionOffset: new THREE.Vector3(), remoteCorrectionRemainingMs: 0,
       name: o.name, avatar: o.avatar, isPlayer: o.isPlayer, team: o.team, preset: o.preset, rig, tag, tagBar: fill,
-      x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, heading: 0, grounded: true, slopeVy: 0, steerCur: 0, pitch: 0, roll: 0,
+      x: 0, z: 0, y: 0, vy: 0, vx: 0, vz: 0, heading: 0, grounded: true, slopeVy: 0, steerCur: 0,
+      driverSpeed: 0, driverHeading: 0, deathAnimT: 0, pitch: 0, roll: 0,
       speedF: o.isPlayer || o.isRemote || o.remoteId ? 1 : 0.78 + o.skill * 0.12,
       stats: { speed: o.preset.speed, handling: o.preset.handling, armor: o.preset.armor },
       hp: 100, maxHp: 100, shield: 0, boostT: 0, boostMeter: 0.5, boosting: false, drifting: false, driftDir: 1, driftT: 0, driftLevel: 0,
@@ -894,6 +904,16 @@ export class Game {
   }
 
   private applyNetworkSnapshot(kart: Kart, snapshot: PlayerSnapshot) {
+    if (kart.hp > snapshot.hp) kart.lastHitT = this.time;
+    if (kart.alive && !snapshot.alive) this.killKart(kart, null, "Hit", true);
+    else if (!kart.alive && snapshot.alive) {
+      kart.deathAnimT = 0;
+      kart.driverSpeed = 0;
+      kart.driverHeading = snapshot.heading;
+      kart.rig.group.visible = true;
+      kart.tag.style.display = "";
+      kart.invuln = 1;
+    }
     kart.x = snapshot.x;
     kart.y = snapshot.y;
     kart.z = snapshot.z;
@@ -907,14 +927,13 @@ export class Game {
     kart.boosting = snapshot.boosting;
     kart.drifting = snapshot.drifting;
     kart.driftLevel = snapshot.driftLevel;
-    kart.alive = snapshot.alive;
     kart.hp = snapshot.hp;
     kart.weapon = WEAPON_IDS.find((weapon) => weapon === snapshot.weapon) ?? null;
     kart.ammo = snapshot.ammo;
     kart.input.aimX = snapshot.aimX;
     kart.input.aimZ = snapshot.aimZ;
     kart.input.fire = snapshot.firing;
-    kart.rig.group.visible = snapshot.alive;
+    kart.alive = snapshot.alive;
   }
 
   private placeKart(k: Kart, spawnIdx: number, sound = false) {
@@ -925,6 +944,7 @@ export class Game {
     k.vy = 0;
     k.vx = k.vz = 0;
     k.heading = s.heading;
+    k.driverHeading = k.heading;
     k.grounded = true;
     k.hp = k.maxHp;
     k.shield = 0;
@@ -937,6 +957,8 @@ export class Game {
     k.ammo = 30;
     k.cooldown = 0;
     k.alive = true;
+    k.deathAnimT = 0;
+    k.driverSpeed = 0;
     k.invuln = sound ? 2.5 : 0.5;
     k.rig.group.visible = true;
     k.rig.group.position.set(k.x, 0, k.z);
@@ -960,12 +982,15 @@ export class Game {
         y: typeof state.y === "number" ? state.y : 0,
         z: state.z,
         vx: typeof state.vx === "number" ? state.vx : 0,
+        vy: typeof state.vy === "number" ? state.vy : 0,
         vz: typeof state.vz === "number" ? state.vz : 0,
         heading: typeof state.heading === "number" ? state.heading : k.heading,
         pitch: typeof state.pitch === "number" ? state.pitch : 0,
         roll: typeof state.roll === "number" ? state.roll : 0,
         boosting: state.boosting === true,
         drifting: state.drifting === true,
+        grounded: typeof state.grounded === "boolean" ? state.grounded : true,
+        firing: state.firing === true,
         driftDir: typeof state.driftDir === "number" ? state.driftDir : 1,
         aimX: typeof state.aimX === "number" ? state.aimX : state.x,
         aimZ: typeof state.aimZ === "number" ? state.aimZ : state.z,
@@ -983,15 +1008,20 @@ export class Game {
       k.y = sample.y;
       k.z = sample.z;
       k.vx = sample.vx;
+      k.vy = sample.vy;
       k.vz = sample.vz;
       k.heading = sample.heading;
+      k.driverHeading = sample.heading;
+      k.grounded = sample.grounded;
+      k.input.fire = sample.firing;
       k.alive = sample.alive;
       k.hp = sample.hp;
       k.score = sample.score;
       k.kills = sample.kills;
       k.deaths = sample.deaths;
       k.rig.group.position.set(k.x, k.y, k.z);
-      k.rig.group.visible = k.alive;
+      k.deathAnimT = 0;
+      k.rig.group.visible = true;
       k.tag.style.display = k.alive ? "" : "none";
   }
 
@@ -2390,8 +2420,9 @@ export class Game {
     this.netInFlight = true;
     const p = this.player;
     const state: KartState = {
-      x: p.x, y: p.y, z: p.z, vx: p.vx, vz: p.vz, heading: p.heading,
+      x: p.x, y: p.y, z: p.z, vx: p.vx, vy: p.vy, vz: p.vz, heading: p.heading,
       pitch: p.pitch, roll: p.roll, boosting: p.boosting, drifting: p.drifting, driftDir: p.driftDir,
+      grounded: p.grounded, firing: p.input.fire,
       aimX: p.input.aimX, aimZ: p.input.aimZ, weapon: p.weapon, ammo: p.ammo,
       alive: p.alive, hp: p.hp, score: p.score, kills: p.kills, deaths: p.deaths,
     };
@@ -2474,6 +2505,9 @@ export class Game {
       if (!k.alive && st.alive) {
         // peer respawned
         k.alive = true;
+        k.deathAnimT = 0;
+        k.driverSpeed = 0;
+        k.driverHeading = st.heading ?? k.heading;
         k.rig.group.visible = true;
         if (!k.isPlayer) k.tag.style.display = "";
         k.invuln = 1;
@@ -2482,9 +2516,10 @@ export class Game {
       }
       const sample: NetKartState = {
         x: st.x, y: st.y ?? k.y, z: st.z ?? k.z,
-        vx: st.vx ?? 0, vz: st.vz ?? 0,
+        vx: st.vx ?? 0, vy: st.vy ?? 0, vz: st.vz ?? 0,
         heading: st.heading ?? k.heading, pitch: st.pitch ?? 0, roll: st.roll ?? 0,
-        boosting: st.boosting === true, drifting: st.drifting === true, driftDir: st.driftDir ?? 1,
+        boosting: st.boosting === true, drifting: st.drifting === true,
+        grounded: st.grounded ?? true, firing: st.firing === true, driftDir: st.driftDir ?? 1,
         aimX: st.aimX ?? k.x, aimZ: st.aimZ ?? k.z,
         weapon: (st.weapon as WeaponId) ?? null, ammo: st.ammo ?? 0,
         alive: st.alive !== false, hp: st.hp ?? 100,
@@ -2495,6 +2530,7 @@ export class Game {
       if (last && sample.serverTime < last.serverTime) continue;
       if (last && sample.serverTime === last.serverTime) k.netSamples[k.netSamples.length - 1] = sample;
       else k.netSamples.push(sample);
+      if (k.hp > sample.hp) k.lastHitT = this.time;
       if (k.netSamples.length > 24) k.netSamples.splice(0, k.netSamples.length - 24);
       k.hp = sample.hp;
       k.score = sample.score;
@@ -2597,12 +2633,15 @@ export class Game {
     let y = first.y;
     let z = first.z;
     let vx = first.vx;
+    let vy = first.vy;
     let vz = first.vz;
     let heading = first.heading;
     let pitch = first.pitch;
     let roll = first.roll;
     let boosting = first.boosting;
     let drifting = first.drifting;
+    let grounded = first.grounded;
+    let firing = first.firing;
     let driftDir = first.driftDir;
     let aimX = first.aimX;
     let aimZ = first.aimZ;
@@ -2614,12 +2653,15 @@ export class Game {
       y = first.y + (second.y - first.y) * t;
       z = first.z + (second.z - first.z) * t;
       vx = first.vx + (second.vx - first.vx) * t;
+      vy = first.vy + (second.vy - first.vy) * t;
       vz = first.vz + (second.vz - first.vz) * t;
       heading = lerpAngle(first.heading, second.heading, t);
       pitch = first.pitch + (second.pitch - first.pitch) * t;
       roll = first.roll + (second.roll - first.roll) * t;
       boosting = t < 0.5 ? first.boosting : second.boosting;
       drifting = t < 0.5 ? first.drifting : second.drifting;
+      grounded = t < 0.5 ? first.grounded : second.grounded;
+      firing = t < 0.5 ? first.firing : second.firing;
       driftDir = t < 0.5 ? first.driftDir : second.driftDir;
       aimX = first.aimX + (second.aimX - first.aimX) * t;
       aimZ = first.aimZ + (second.aimZ - first.aimZ) * t;
@@ -2631,12 +2673,15 @@ export class Game {
       y = latest.y;
       z = latest.z + latest.vz * age;
       vx = latest.vx;
+      vy = latest.vy;
       vz = latest.vz;
       heading = latest.heading;
       pitch = latest.pitch;
       roll = latest.roll;
       boosting = latest.boosting;
       drifting = latest.drifting;
+      grounded = latest.grounded;
+      firing = latest.firing;
       driftDir = latest.driftDir;
       aimX = latest.aimX;
       aimZ = latest.aimZ;
@@ -2646,15 +2691,18 @@ export class Game {
     k.y = y;
     k.z = z;
     k.vx = vx;
+    k.vy = vy;
     k.vz = vz;
     k.heading = heading;
     k.pitch = pitch;
     k.roll = roll;
     k.boosting = boosting;
     k.drifting = drifting;
+    k.grounded = grounded;
     k.driftDir = driftDir;
     k.input.aimX = aimX;
     k.input.aimZ = aimZ;
+    k.input.fire = firing;
     k.weapon = state.weapon;
     k.ammo = state.ammo;
     k.hp = state.hp;
@@ -2951,13 +2999,26 @@ export class Game {
 
   private syncRig(k: Kart, dt: number) {
     const r = k.rig;
-    if (!k.alive) return;
+    if (!k.alive) {
+      k.deathAnimT += dt;
+      if (k.deathAnimT >= 0.72) {
+        r.group.visible = false;
+        return;
+      }
+    }
     r.group.position.set(k.x, k.y, k.z);
     r.group.rotation.y = k.heading;
     r.body.rotation.set(-k.pitch, 0, k.roll);
     const vf = k.vx * Math.sin(k.heading) + k.vz * Math.cos(k.heading);
+    const acceleration = dt > 0 ? (vf - k.driverSpeed) / dt : 0;
+    const headingDelta = wrapAngle(k.heading - k.driverHeading);
+    const turnRate = dt > 0 ? clamp(headingDelta / (dt * 2.7), -1, 1) : 0;
+    const turn = k.isRemote || Math.abs(vf) > 1 ? turnRate : k.steerCur;
+    k.driverSpeed = vf;
+    k.driverHeading = k.heading;
     const bump = k.grounded ? Math.sin(this.time * 38 + k.id) * 0.012 * clamp(Math.abs(vf) / 25, 0, 1) : 0;
     r.body.position.y = bump;
+    r.driver.update(dt, this.time, acceleration, turn, k.vy, k.grounded, k.turretKick, this.time - k.lastHitT, k.alive, k.weapon);
     for (const s of r.spinners) s.rotation.x += (vf * dt) / 0.45;
     for (const f of r.frontPivots) f.rotation.y = -k.steerCur * 0.45;
     const fl = k.boosting ? 1 : 0;
@@ -2974,7 +3035,7 @@ export class Game {
       (r.shield.material as THREE.MeshBasicMaterial).opacity = (0.22 + Math.sin(this.time * 6) * 0.05) * blink;
       r.shield.scale.setScalar(1 + Math.sin(this.time * 8) * 0.03);
     }
-    r.group.visible = !k.isRemote && k.invuln > 0 && k.invuln < 2.5 && !sh
+    r.group.visible = !k.alive ? true : !k.isRemote && k.invuln > 0 && k.invuln < 2.5 && !sh
       ? Math.sin(this.time * 40) > -0.3
       : true;
     r.ringMat.opacity = 0.55 + (k.boosting ? 0.35 : 0) + Math.sin(this.time * 4 + k.id) * 0.08;

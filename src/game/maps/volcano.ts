@@ -197,7 +197,7 @@ export function buildVolcano(scene: THREE.Scene, quality: MapQuality): Arena {
   // ---------------- elevated rock platforms + ramps ----------------------
   const plat = { base: M.darkRock, top: M.basalt, trim: M.orange };
   const rampM = { side: M.darkRock, edge: M.orange, stripe: M.basalt };
-  for (const [cx, cz, rot] of [[-44, -44, 0], [44, 44, 0], [-44, 44, 1], [44, -44, 1]] as [number, number, number][]) {
+  for (const [cx, cz, rot] of [[-38, -38, 0], [38, 38, 0], [-38, 38, 1], [38, -38, 1]] as [number, number, number][]) {
     kit.block(cx - 7, cx + 7, cz - 6, cz + 6, 1.7, plat, true);
     if (rot === 0) {
       kit.ramp(cx + 7, cx + 15, cz - 6, cz + 6, 1.7, 1, rampM);
@@ -249,8 +249,8 @@ export function buildVolcano(scene: THREE.Scene, quality: MapQuality): Arena {
     { x: -8, z: 0, y: 0, kind: "weapon" }, { x: 8, z: 0, y: 0, kind: "weapon" },
     { x: 0, z: -44, y: 0, kind: "weapon" }, { x: 0, z: 44, y: 0, kind: "weapon" },
     { x: -44, z: 0, y: 0, kind: "weapon" }, { x: 44, z: 0, y: 0, kind: "weapon" },
-    { x: -44, z: -44, y: 1.7, kind: "weapon" }, { x: 44, z: 44, y: 1.7, kind: "weapon" },
-    { x: 44, z: -44, y: 1.7, kind: "weapon" }, { x: -44, z: 44, y: 1.7, kind: "weapon" },
+    { x: -38, z: -38, y: 1.7, kind: "weapon" }, { x: 38, z: 38, y: 1.7, kind: "weapon" },
+    { x: 38, z: -38, y: 1.7, kind: "weapon" }, { x: -38, z: 38, y: 1.7, kind: "weapon" },
     { x: -33, z: 33, y: 0, kind: "weapon" }, { x: 33, z: -33, y: 0, kind: "weapon" },
   );
   const health: PickupZone[] = [

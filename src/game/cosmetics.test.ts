@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { buyCosmetic, calculateMatchCredits } from "./cosmetics";
-import { awardMatchCredits, loadProfile } from "./storage";
+import { awardMatchCredits, loadProfile, saveProfile } from "./storage";
 import { DEFAULT_PROFILE } from "./types";
 
 const savedItems = new Map<string, string>();
@@ -13,6 +13,7 @@ Object.defineProperty(globalThis, "localStorage", {
 });
 savedItems.set("kw_profile_v1", JSON.stringify({ name: "Returning Driver", avatar: "🤖", kartId: 2, glow: 0xb64dff }));
 const migratedProfile = loadProfile();
+assert.equal(migratedProfile.avatar, "🤖", "saved driver selections survive profile migration");
 assert.equal(migratedProfile.credits, 0, "legacy profiles start with an empty wallet");
 assert.deepEqual(migratedProfile.ownedPaints, ["factory"]);
 assert.equal(migratedProfile.wheelStyle, "stock");
@@ -37,5 +38,7 @@ assert.equal(calculateMatchCredits(1_000, true), 45);
 assert.equal(calculateMatchCredits(Number.MAX_SAFE_INTEGER, true), 200);
 assert.equal(awardMatchCredits(1_000, true), 45);
 assert.equal(loadProfile().credits, 45, "match rewards persist in the local profile");
+saveProfile({ ...DEFAULT_PROFILE, avatar: "🐸" });
+assert.equal(loadProfile().avatar, "🐸", "selected 3D driver styles persist across matches");
 
 console.log("Cosmetic purchases and match-credit rewards passed.");

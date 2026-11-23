@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import type { KartPreset } from "./types";
+import { DriverCharacter } from "./driver";
 
 export interface KartRig {
   group: THREE.Group;
@@ -9,6 +10,7 @@ export interface KartRig {
   flames: THREE.Mesh[];
   shield: THREE.Mesh;
   underglow: THREE.Mesh;
+  driver: DriverCharacter;
   bodyMats: THREE.MeshStandardMaterial[];
   primaryMat: THREE.MeshStandardMaterial;
   ringMat: THREE.MeshBasicMaterial;
@@ -16,7 +18,6 @@ export interface KartRig {
 }
 
 let glowTex: THREE.Texture | null = null;
-const avatarTextures = new Map<string, THREE.Texture>();
 export function getGlowTexture(): THREE.Texture {
   if (glowTex) return glowTex;
   const c = document.createElement("canvas");
@@ -31,22 +32,6 @@ export function getGlowTexture(): THREE.Texture {
   glowTex = new THREE.CanvasTexture(c);
   glowTex.colorSpace = THREE.SRGBColorSpace;
   return glowTex;
-}
-
-function getAvatarTexture(avatar: string): THREE.Texture {
-  const cached = avatarTextures.get(avatar);
-  if (cached) return cached;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = 128;
-  const context = canvas.getContext("2d")!;
-  context.font = "112px sans-serif";
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(avatar, 64, 66);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  avatarTextures.set(avatar, texture);
-  return texture;
 }
 
 function numberTexture(num: string, bg: string): THREE.Texture {
@@ -99,6 +84,7 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
   const frontPivots: THREE.Object3D[] = [];
   const spinners: THREE.Object3D[] = [];
   const flames: THREE.Mesh[] = [];
+  let driverCharacter: DriverCharacter | null = null;
 
   const primaryMat = std(primary, { roughness: 0.35, metalness: 0.35 });
   const accentMat = std(opts.accent ?? preset.accent, { roughness: 0.4 });
@@ -144,21 +130,9 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
   };
 
   const driver = (y: number, z: number) => {
-    add(boxGeo, std(0x2a2f3d), [0, y - 0.2, z], [0.55, 0.5, 0.35]);
-    const faceMaterial = new THREE.SpriteMaterial({
-      map: getAvatarTexture(opts.avatar ?? "😎"),
-      transparent: true,
-      alphaTest: 0.05,
-      depthWrite: false,
-      depthTest: false,
-      toneMapped: false,
-    });
-    owned.push(faceMaterial);
-    const face = new THREE.Sprite(faceMaterial);
-    face.position.set(0, y + 0.3, z + 0.02);
-    face.scale.set(0.68, 0.68, 1);
-    face.renderOrder = 2;
-    body.add(face);
+    driverCharacter = new DriverCharacter(opts.avatar ?? "😎");
+    driverCharacter.group.position.set(0, y - 1, z + 0.3);
+    body.add(driverCharacter.group);
   };
 
   const flame = (x: number, y: number, z: number) => {
@@ -275,7 +249,8 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
   shield.visible = false;
   group.add(shield);
 
-  return { group, body, frontPivots, spinners, flames, shield, underglow, bodyMats, primaryMat, ringMat, ownedMaterials: owned };
+  if (!driverCharacter) throw new Error("Kart preset did not create its driver character.");
+  return { group, body, frontPivots, spinners, flames, shield, underglow, driver: driverCharacter, bodyMats, primaryMat, ringMat, ownedMaterials: owned };
 }
 
 export function disposeRig(r: KartRig) {

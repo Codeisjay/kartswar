@@ -637,6 +637,12 @@ export function auditMap(a: AuditInput): string[] {
   // Ramps and low cover are always considered reachable (drivable / walkable).
   const elevated = a.surfaces.filter((s) => isElev(s) && s.nav === true);
   const ramps = a.surfaces.filter((s) => s.dir >= 0);
+  for (const ramp of ramps) {
+    const edgeClearance = Math.min(ramp.x0 + a.hx, a.hx - ramp.x1, ramp.z0 + a.hz, a.hz - ramp.z1);
+    if (edgeClearance < 10) {
+      issues.push(`ramp too close to arena edge (${edgeClearance.toFixed(1)}m clearance)`);
+    }
+  }
   const reachable = new Set<Surface>(a.surfaces.filter((s) => !isElev(s) || s.dir >= 0 || s.nav !== true));
   let changed = true;
   while (changed) {

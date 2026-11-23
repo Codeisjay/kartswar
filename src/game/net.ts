@@ -36,12 +36,15 @@ export interface KartState {
   y: number;
   z: number;
   vx: number;
+  vy?: number;
   vz: number;
   heading: number;
   pitch: number;
   roll: number;
   boosting: boolean;
   drifting: boolean;
+  grounded?: boolean;
+  firing?: boolean;
   driftDir: number;
   aimX: number;
   aimZ: number;

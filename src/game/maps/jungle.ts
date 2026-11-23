@@ -73,7 +73,7 @@ export function buildJungle(scene: THREE.Scene, quality: MapQuality): Arena {
 
   // water ponds (visual) with bridges over them
   const waterMat = new THREE.MeshStandardMaterial({ color: 0x1a6a8a, roughness: 0.15, metalness: 0.6, transparent: true, opacity: 0.85 });
-  for (const [px, pz] of [[-8, -34], [8, 34]] as [number, number][]) {
+  for (const [px, pz] of [[-8, -28], [8, 28]] as [number, number][]) {
     const pond = new THREE.Mesh(new THREE.CircleGeometry(9, 28), waterMat);
     pond.rotation.x = -Math.PI / 2;
     pond.position.set(px, 0.04, pz);
@@ -84,12 +84,12 @@ export function buildJungle(scene: THREE.Scene, quality: MapQuality): Arena {
   }
 
   // watchtower platform (elevated combat spot) with two ramps
-  kit.block(-6, 6, 44, 52, 2.4, plat, true);
-  kit.ramp(-6, 6, 38, 44, 2.4, 2, { side: M.rock, edge: M.toxic, stripe: M.metal });
-  kit.ramp(-14, -6, 44, 52, 2.4, 0, { side: M.rock, edge: M.toxic, stripe: M.metal });
+  kit.block(-6, 6, 36, 44, 2.4, plat, true);
+  kit.ramp(-6, 6, 30, 36, 2.4, 2, { side: M.rock, edge: M.toxic, stripe: M.metal });
+  kit.ramp(-14, -6, 36, 44, 2.4, 0, { side: M.rock, edge: M.toxic, stripe: M.metal });
   {
     const g = new THREE.Group();
-    g.position.set(0, 2.4, 48);
+    g.position.set(0, 2.4, 40);
     kit.root.add(g);
     for (const [lx, lz] of [[-4, -2], [4, -2], [-4, 2], [4, 2]] as [number, number][])
       kit.mesh(GEO.cyl, M.metal, lx, 2.5, lz, 0.3, 5, 0.3, g);
@@ -116,7 +116,7 @@ export function buildJungle(scene: THREE.Scene, quality: MapQuality): Arena {
     { x0: -9, x1: 9, z0: -60, z1: 60 },
     { x0: -11, x1: -5, z0: -52, z1: -18 },
     { x0: 5, x1: 11, z0: 18, z1: 52 },
-    { x0: -16, x1: 16, z0: 34, z1: 54 },
+    { x0: -16, x1: 16, z0: 26, z1: 46 },
     { x0: -46, x1: -22, z0: -10, z1: 10 },
     { x0: 22, x1: 46, z0: -10, z1: 10 },
   ];
@@ -172,8 +172,8 @@ export function buildJungle(scene: THREE.Scene, quality: MapQuality): Arena {
   zones.push(
     { x: -28, z: 0, y: 0, kind: "weapon" }, { x: 28, z: 0, y: 0, kind: "weapon" },
     { x: 0, z: -34, y: 0, kind: "weapon" }, { x: 0, z: 34, y: 0, kind: "weapon" },
-    { x: -8, z: -34, y: 1.2, kind: "weapon" }, { x: 8, z: 34, y: 1.2, kind: "weapon" },
-    { x: 0, z: 48, y: 2.4, kind: "weapon" },
+    { x: -8, z: -28, y: 1.2, kind: "weapon" }, { x: 8, z: 28, y: 1.2, kind: "weapon" },
+    { x: 0, z: 40, y: 2.4, kind: "weapon" },
     { x: -50, z: 0, y: 0, kind: "weapon" }, { x: 50, z: 0, y: 0, kind: "weapon" },
     { x: -20, z: 20, y: 0, kind: "weapon" }, { x: 20, z: -20, y: 0, kind: "weapon" },
   );

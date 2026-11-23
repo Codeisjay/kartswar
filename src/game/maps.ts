@@ -5,9 +5,10 @@ import type { MapQuality } from "./maps/common";
 import { buildCity } from "./maps/city";
 import { buildJungle } from "./maps/jungle";
 import { buildVolcano } from "./maps/volcano";
+import { buildSunbeam } from "./maps/sunbeam";
 import { MAP_ID } from "./spawns";
 
-export type MapId = "neon" | "city" | "volcano" | "jungle";
+export type MapId = "neon" | "city" | "volcano" | "jungle" | "sunbeam";
 
 export interface MapEnv {
   bg: number;
@@ -73,6 +74,16 @@ export const MAPS: MapDef[] = [
     image: "/maps/jungle.jpg",
     env: { bg: 0x0a2018, exposure: 1.14, fog: [0x143024, 90, 300], hemiSky: 0xaaffcc, hemiGround: 0x2a4a2a, hemi: 1.15, sun: 0xfff2c0, sunIntensity: 2.05 },
   },
+  {
+    id: "sunbeam",
+    name: "Sunbeam Boardwalk",
+    tagline: "A bright day at the beach",
+    desc: "Race across a sunny sandy arena, weave through the pastel boardwalk and launch onto the raised central pier.",
+    difficulty: "Easy",
+    traits: ["Bright beach", "Boardwalk", "Four jump ramps", "Open lanes"],
+    image: "/maps/sunbeam.svg",
+    env: { bg: 0x9bdff3, exposure: 1.08, fog: [0xc6edf5, 150, 440], hemiSky: 0xc7f3ff, hemiGround: 0xb9a57c, hemi: 1.55, sun: 0xfff1cf, sunIntensity: 2.35 },
+  },
 ];
 
 export function isSupportedMultiplayerMap(id: string) {
@@ -98,6 +109,9 @@ export function buildMap(id: string, scene: THREE.Scene, quality: MapQuality): A
       break;
     case "jungle":
       arena = buildJungle(scene, quality);
+      break;
+    case "sunbeam":
+      arena = buildSunbeam(scene, quality);
       break;
     case "neon":
     default:

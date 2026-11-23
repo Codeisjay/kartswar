@@ -238,7 +238,7 @@ export function TutorialOverlay({
             <button className="kw-chip px-1.5 py-1 text-[9px] text-slate-200" onClick={onBack} disabled={stepIndex === 0}>BACK</button>
             <button className="kw-chip px-1.5 py-1 text-[9px] text-slate-200" onClick={onSkipStep}>SKIP STEP</button>
             <button className="kw-chip px-1.5 py-1 text-[9px] text-slate-200" onClick={onSkipTutorial}>SKIP TUTORIAL</button>
-            <button className={`kw-chip px-2 py-1 text-[9px] font-bold ${finished ? "border-pink-300/60 bg-pink-300/15 text-pink-100" : "border-cyan-300/60 bg-cyan-300/15 text-cyan-100"}`} disabled={!canContinue} onClick={finished ? onFinish : onNext}>
+            <button className={`kw-chip px-2 py-1 text-[9px] font-bold ${finished ? "border-pink-300/60 bg-pink-300/15 text-pink-100" : "border-cyan-300/60 bg-cyan-300/15 text-cyan-100"}`} onClick={finished ? onFinish : onNext}>
               {finished ? "FINISH" : "NEXT"}
             </button>
           </div>

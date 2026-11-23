@@ -257,7 +257,8 @@ export default function KartSelect({ profile, onChange, onBack }: { profile: Pro
             </div>
           </div>
           <div className="kw-panel p-4">
-            <div className="mb-2 text-xs uppercase tracking-widest text-slate-400">Driver</div>
+            <div className="mb-1 text-xs uppercase tracking-widest text-slate-400">Driver character</div>
+            <div className="text-xs text-slate-500">Choose the 3D racer style for your kart.</div>
             <input
               value={profile.name}
               maxLength={14}
@@ -267,7 +268,7 @@ export default function KartSelect({ profile, onChange, onBack }: { profile: Pro
             />
             <div className="mt-3 grid grid-cols-6 gap-2">
               {AVATARS.map((a) => (
-                <button key={a} className={`kw-chip py-1.5 text-2xl ${profile.avatar === a ? "active" : ""}`} onClick={() => onChange({ ...profile, avatar: a })}>
+                <button key={a} aria-label={`Select ${a} driver`} className={`kw-chip py-1.5 text-2xl ${profile.avatar === a ? "active" : ""}`} onClick={() => onChange({ ...profile, avatar: a })}>
                   {a}
                 </button>
               ))}
