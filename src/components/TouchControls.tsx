@@ -52,20 +52,20 @@ export default function TouchControls({ onChange }: Props) {
   };
 
   return (
-    <div data-ui className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end justify-between p-4 pb-6" style={{ touchAction: "none" }}>
+    <div data-ui className="kw-touch-controls pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-end justify-between" style={{ touchAction: "none" }}>
       <div
         ref={baseRef}
-        className="pointer-events-auto relative h-36 w-36 rounded-full border-2 border-cyan-300/50 bg-cyan-300/10"
+        className="kw-touch-stick pointer-events-auto relative rounded-full border-2 border-cyan-300/50 bg-cyan-300/10"
         style={{ touchAction: "none" }}
         onPointerDown={stickDown}
         onPointerMove={stickMove}
         onPointerUp={stickUp}
         onPointerCancel={stickUp}
       >
-        <div className="absolute left-1/2 top-1/2 h-14 w-14 rounded-full border-2 border-cyan-200 bg-cyan-300/40 shadow-[0_0_20px_rgba(53,232,255,0.6)]" style={{ transform: `translate(calc(-50% + ${knob.x}px), calc(-50% + ${knob.y}px))` }} />
+        <div className="kw-touch-knob absolute left-1/2 top-1/2 rounded-full border-2 border-cyan-200 bg-cyan-300/40 shadow-[0_0_20px_rgba(53,232,255,0.6)]" style={{ transform: `translate(calc(-50% + ${knob.x}px), calc(-50% + ${knob.y}px))` }} />
         <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] font-bold tracking-widest text-cyan-200/70">STEER</div>
       </div>
-      <div className="pointer-events-auto relative h-44 w-52" style={{ touchAction: "none" }}>
+      <div className="kw-touch-actions pointer-events-auto relative" style={{ touchAction: "none" }}>
         <button
           onPointerDown={(e) => {
             e.preventDefault();
@@ -81,7 +81,7 @@ export default function TouchControls({ onChange }: Props) {
             state.current.fire = false;
             onChange({ ...state.current });
           }}
-          className="kw-display absolute bottom-0 right-0 h-24 w-24 rounded-full border-4 border-red-200/70 bg-red-500/70 text-lg text-white shadow-[0_0_28px_rgba(255,50,70,0.7)] active:scale-95"
+          className="kw-touch-fire kw-display absolute bottom-0 right-0 rounded-full border-4 border-red-200/70 bg-red-500/70 text-white shadow-[0_0_28px_rgba(255,50,70,0.7)] active:scale-95"
           style={{ touchAction: "none" }}
         >
           FIRE
@@ -101,7 +101,7 @@ export default function TouchControls({ onChange }: Props) {
             state.current.drift = false;
             onChange({ ...state.current });
           }}
-          className="kw-display absolute bottom-2 right-28 h-16 w-16 rounded-full border-2 border-yellow-200/70 bg-yellow-400/40 text-xs text-white active:scale-95"
+          className="kw-touch-drift kw-display absolute rounded-full border-2 border-yellow-200/70 bg-yellow-400/40 text-xs text-white active:scale-95"
           style={{ touchAction: "none" }}
         >
           DRIFT
@@ -121,7 +121,7 @@ export default function TouchControls({ onChange }: Props) {
             state.current.boost = false;
             onChange({ ...state.current });
           }}
-          className="kw-display absolute bottom-24 right-8 h-16 w-16 rounded-full border-2 border-green-200/70 bg-green-400/40 text-xs text-white active:scale-95"
+          className="kw-touch-boost kw-display absolute rounded-full border-2 border-green-200/70 bg-green-400/40 text-xs text-white active:scale-95"
           style={{ touchAction: "none" }}
         >
           BOOST

@@ -46,6 +46,44 @@ body {
   border-radius: 14px;
 }
 
+.kw-touch-controls {
+  padding: 0 1rem max(1.5rem, env(safe-area-inset-bottom));
+}
+.kw-touch-stick {
+  width: clamp(6.5rem, 24vw, 8rem);
+  height: clamp(6.5rem, 24vw, 8rem);
+}
+.kw-touch-knob {
+  width: clamp(3rem, 12vw, 3.5rem);
+  height: clamp(3rem, 12vw, 3.5rem);
+}
+.kw-touch-actions {
+  width: clamp(9rem, 44vw, 12rem);
+  height: clamp(9rem, 40vw, 11rem);
+  --touch-fire-size: clamp(4rem, 22vw, 6rem);
+  --touch-small-size: clamp(3rem, 17vw, 4rem);
+  --touch-gap: clamp(0.35rem, 2vw, 0.75rem);
+}
+.kw-touch-fire {
+  width: var(--touch-fire-size);
+  height: var(--touch-fire-size);
+  font-size: clamp(0.8rem, 4vw, 1.125rem);
+}
+.kw-touch-drift {
+  width: var(--touch-small-size);
+  height: var(--touch-small-size);
+  right: calc(var(--touch-fire-size) + var(--touch-gap));
+  bottom: var(--touch-gap);
+  font-size: clamp(0.55rem, 3vw, 0.75rem);
+}
+.kw-touch-boost {
+  width: var(--touch-small-size);
+  height: var(--touch-small-size);
+  right: calc((var(--touch-fire-size) - var(--touch-small-size)) / 2);
+  bottom: calc(var(--touch-fire-size) + var(--touch-gap));
+  font-size: clamp(0.55rem, 3vw, 0.75rem);
+}
+
 .kw-btn {
   position: relative;
   display: inline-flex;

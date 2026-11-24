@@ -344,30 +344,32 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
             </div>
           </div>
 
-          {/* bottom left: health */}
-          <div className={`pointer-events-none absolute z-10 ${isTouch ? "left-1/2 top-[58px] w-60 -translate-x-1/2" : "bottom-4 left-4 w-72 max-w-[45vw]"}`}>
-            <div className="kw-panel px-3 py-2">
+          {/* vehicle status */}
+          <div className={`pointer-events-none absolute z-10 ${isTouch ? "right-3 top-[82px] w-36" : "bottom-4 left-4 w-72 max-w-[45vw]"}`}>
+            <div className={`kw-panel ${isTouch ? "px-2 py-1.5" : "px-3 py-2"}`}>
               <div className="flex items-end justify-between">
-                <span className="kw-display text-sm tracking-widest text-slate-300">HULL {hud.shield > 0 && <span className="text-cyan-300">· SHIELD {hud.shield.toFixed(1)}s</span>}</span>
-                <span className="kw-display text-2xl leading-none">{Math.ceil(hud.hp)}</span>
+                <span className={`kw-display tracking-widest text-slate-300 ${isTouch ? "text-[10px]" : "text-sm"}`}>
+                  HULL {hud.shield > 0 && <span className="text-cyan-300">· SHIELD {hud.shield.toFixed(1)}s</span>}
+                </span>
+                <span className={`kw-display leading-none ${isTouch ? "text-lg" : "text-2xl"}`}>{Math.ceil(hud.hp)}</span>
               </div>
-              <div className="relative mt-1 h-4 overflow-hidden rounded-full bg-black/60 ring-1 ring-white/20" style={hud.shield > 0 ? { boxShadow: "0 0 14px #38e8ff" } : undefined}>
+              <div className={`relative mt-1 overflow-hidden rounded-full bg-black/60 ring-1 ring-white/20 ${isTouch ? "h-2" : "h-4"}`} style={hud.shield > 0 ? { boxShadow: "0 0 14px #38e8ff" } : undefined}>
                 <div
                   className="h-full rounded-full transition-[width] duration-150"
                   style={{ width: `${hpPct}%`, background: hpPct > 55 ? "linear-gradient(90deg,#3ddc6a,#9dff3a)" : hpPct > 28 ? "linear-gradient(90deg,#ffb020,#ffe14d)" : "linear-gradient(90deg,#ff2a3a,#ff7a3a)" }}
                 />
               </div>
-              <div className="mt-2 flex items-center gap-2">
-                <span className="text-[10px] font-bold tracking-widest text-green-300">BOOST</span>
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-black/60 ring-1 ring-white/10">
+              <div className={`flex items-center ${isTouch ? "mt-1 gap-1" : "mt-2 gap-2"}`}>
+                <span className={`font-bold tracking-widest text-green-300 ${isTouch ? "text-[8px]" : "text-[10px]"}`}>BOOST</span>
+                <div className={`flex-1 overflow-hidden rounded-full bg-black/60 ring-1 ring-white/10 ${isTouch ? "h-1.5" : "h-2"}`}>
                   <div className="h-full rounded-full" style={{ width: `${hud.boostMeter * 100}%`, background: hud.boosting ? "linear-gradient(90deg,#fff,#6dff6d)" : "linear-gradient(90deg,#2fb860,#6dff6d)" }} />
                 </div>
-                <span className="kw-display w-14 text-right text-sm text-slate-200">{hud.speed} <span className="text-[9px]">KM/H</span></span>
+                <span className={`kw-display text-right text-slate-200 ${isTouch ? "w-12 text-xs" : "w-14 text-sm"}`}>{hud.speed} <span className={isTouch ? "text-[7px]" : "text-[9px]"}>KM/H</span></span>
               </div>
               {hud.driftLevel > 0 && (
                 <div className="mt-1 flex gap-1">
                   {[1, 2, 3].map((l) => (
-                    <div key={l} className="h-1.5 flex-1 rounded-full" style={{ background: hud.driftLevel >= l ? (l === 3 ? "#ff8a1f" : l === 2 ? "#35c8ff" : "#ffffff") : "rgba(255,255,255,0.15)" }} />
+                    <div key={l} className={`flex-1 rounded-full ${isTouch ? "h-1" : "h-1.5"}`} style={{ background: hud.driftLevel >= l ? (l === 3 ? "#ff8a1f" : l === 2 ? "#35c8ff" : "#ffffff") : "rgba(255,255,255,0.15)" }} />
                   ))}
                 </div>
               )}
