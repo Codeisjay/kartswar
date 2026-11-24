@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Game } from "@/game/engine";
 import { addScore, awardMatchCredits, loadScores, type ScoreEntry } from "@/game/storage";
 import { saveTutorialProgress } from "@/game/storage";
-import { TEAM_COLORS, WEAPONS, type GameConfig, type GameEvent, type HudState, type KillEntry, type MatchResult, type NetworkSeat, type TutorialState } from "@/game/types";
+import { KART_PRESETS, TEAM_COLORS, WEAPONS, type GameConfig, type GameEvent, type HudState, type KillEntry, type MatchResult, type NetworkSeat, type TutorialState } from "@/game/types";
 import TouchControls from "./TouchControls";
+import KartPreview from "./KartPreview";
 import ScoreTable from "./Scores";
 import { HelpOverlay, TUTORIAL_STEPS, TutorialOverlay } from "./Guidance";
 
@@ -21,6 +22,10 @@ const fmt = (s: number) => {
   return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
 };
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
+const COIN_OFFSETS = [
+  [-46, -22], [-28, -38], [-5, -42], [22, -36], [44, -19], [49, 8],
+  [34, 30], [8, 39], [-20, 34], [-43, 16], [-15, 5], [19, 12],
+] as const;
 
 export default function GameView({ cfg, onExit, onRestart, restartError }: Props) {
   const isTouch = cfg.touch;
@@ -248,6 +253,11 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
 
   const hpPct = hud ? (hud.hp / hud.maxHp) * 100 : 100;
   const w = hud?.weapon ? WEAPONS[hud.weapon.id] : null;
+  const winner = result?.r.winner ?? null;
+  const winnerPreset = winner ? KART_PRESETS.find((preset) => preset.id === winner.kartId) ?? KART_PRESETS[0] : null;
+  const winnerProfile = winner && winnerPreset
+    ? { ...cfg.profile, name: winner.name, avatar: winner.avatar, kartId: winner.kartId, glow: winnerPreset.glow, paintId: "factory", wheelStyle: "stock" }
+    : null;
 
   return (
     <div className="absolute inset-0 overflow-hidden bg-black">
@@ -540,11 +550,40 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
               {(restartError || networkError) && <div className="mt-3 rounded-lg bg-red-500/15 px-3 py-2 text-center text-sm text-red-200">{restartError || networkError}</div>}
               {restartCountdown !== null && <div className="mt-3 text-center text-sm uppercase tracking-[0.3em] text-cyan-200">Match starts in {restartCountdown}</div>}
             </div>
+            {winner && winnerProfile && (
+              <div className="mt-4 flex flex-col items-center overflow-hidden rounded-xl border border-yellow-300/25 bg-gradient-to-r from-yellow-300/10 via-black/25 to-cyan-300/10 px-3 sm:flex-row sm:justify-between">
+                <div className="py-3 text-center sm:px-3 sm:text-left">
+                  <div className="kw-display text-sm tracking-[0.25em] text-yellow-200">🏆 Winner Kart</div>
+                  <div className="mt-1 text-xl font-black text-white">{winner.avatar} {winner.name}</div>
+                  <div className="text-xs uppercase tracking-widest text-cyan-100">{winnerPreset?.name ?? "Kart"} · {result.r.mode === "team" ? `Team ${winner.team === 0 ? "Blue" : "Red"}` : "Match champion"}</div>
+                </div>
+                <div className="h-36 w-full max-w-[260px] shrink-0 sm:h-32">
+                  <KartPreview profile={winnerProfile} />
+                </div>
+              </div>
+            )}
             <div className="mt-5 grid grid-cols-2 gap-3 text-center sm:grid-cols-4">
               <Stat label="Score" value={result.r.score.toLocaleString()} accent />
               <Stat label="Eliminations" value={String(result.r.kills)} />
               <Stat label="Deaths" value={String(result.r.deaths)} />
-              <Stat label="Credits earned" value={`+${result.creditsEarned}`} accent />
+              <div className="relative">
+                <Stat label="Credits earned" value={`+${result.creditsEarned}`} accent />
+                <div key={result.r.duration} aria-hidden="true" className="pointer-events-none absolute inset-0">
+                  {COIN_OFFSETS.map(([x, y], index) => (
+                    <span
+                      key={index}
+                      className="kw-coin-flight"
+                      style={{
+                        "--coin-x": `${x}px`,
+                        "--coin-y": `${y}px`,
+                        animationDelay: `${(index % 4) * 0.065}s`,
+                      } as CSSProperties}
+                    >
+                      🪙
+                    </span>
+                  ))}
+                </div>
+              </div>
             </div>
             {result.r.score > bestBefore && result.r.score > 0 && <div className="mt-3 animate-pulse text-center text-lg font-bold text-yellow-300">🏆 NEW PERSONAL BEST!</div>}
             <div className="mt-5 grid gap-4 md:grid-cols-2">

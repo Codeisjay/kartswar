@@ -1,6 +1,8 @@
 import { getSpawnPoints } from "../../src/game/spawns";
 import type { JoinState, LobbyState, MatchStart, NetworkPlayer, PlayerSnapshot, SnapshotFrame } from "../../src/game/networkTypes";
 
+import { MAX_KART_ID } from "../../src/game/types";
+
 interface Env {
   ROOMS: DurableObjectNamespace;
   KARTSWAR_REALTIME_AUTH_SECRET: string;
@@ -121,7 +123,7 @@ function validClaims(value: unknown): value is TicketClaims {
     && typeof claims.resumeToken === "string" && /^[0-9a-f]{48}$/i.test(claims.resumeToken)
     && !!claims.profile && typeof claims.profile.name === "string"
     && typeof claims.profile.avatar === "string"
-    && Number.isInteger(claims.profile.kartId) && claims.profile.kartId >= 0 && claims.profile.kartId <= 5
+    && Number.isInteger(claims.profile.kartId) && claims.profile.kartId >= 0 && claims.profile.kartId <= MAX_KART_ID
     && (claims.mode === "ffa" || claims.mode === "team")
     && (claims.intent === "create" || claims.intent === "join")
     && typeof claims.exp === "number" && claims.exp >= Math.floor(Date.now() / 1000)

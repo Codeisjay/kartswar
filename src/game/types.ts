@@ -31,7 +31,7 @@ export interface KartPreset {
   id: number;
   name: string;
   tagline: string;
-  shape: "kart" | "buggy" | "saucer";
+  shape: "kart" | "buggy" | "saucer" | "roadster" | "rally";
   primary: number;
   accent: number;
   glow: number;
@@ -48,7 +48,11 @@ export const KART_PRESETS: KartPreset[] = [
   { id: 3, name: "Toxic", tagline: "Heavy hitter", shape: "kart", primary: 0x62d12f, accent: 0xffd21f, glow: 0x9dff3a, num: "88", speed: 0.96, handling: 1.0, armor: 1.12 },
   { id: 4, name: "Royal", tagline: "Balanced bruiser", shape: "buggy", primary: 0x2a5bff, accent: 0xffffff, glow: 0x4aa8ff, num: "21", speed: 1.0, handling: 1.02, armor: 1.04 },
   { id: 5, name: "Crimson Rex", tagline: "Pure speed demon", shape: "buggy", primary: 0xd91e3f, accent: 0xffc400, glow: 0xff2d55, num: "66", speed: 1.06, handling: 0.92, armor: 0.98 },
+  { id: 6, name: "Bubble Pop", tagline: "Candy-coated street sprinter", shape: "roadster", primary: 0xff5d9e, accent: 0x44e5ed, glow: 0xff4fd8, num: "24", speed: 1.06, handling: 1.09, armor: 0.9 },
+  { id: 7, name: "Moss Boss", tagline: "Trail-ready mud buggy", shape: "rally", primary: 0x43b879, accent: 0xffd166, glow: 0xb5ff4d, num: "32", speed: 0.98, handling: 0.98, armor: 1.15 },
 ];
+
+export const MAX_KART_ID = KART_PRESETS.reduce((max, preset) => Math.max(max, preset.id), 0);
 
 export const GLOW_SWATCHES = [0xff6a00, 0x35f0ff, 0xb64dff, 0x9dff3a, 0x4aa8ff, 0xff2d55, 0xffe14d, 0xff4fd8];
 
@@ -232,6 +236,7 @@ export type GameEvent =
 export interface ResultRow {
   name: string;
   avatar: string;
+  kartId: number;
   kills: number;
   deaths: number;
   score: number;
@@ -242,6 +247,7 @@ export interface ResultRow {
 export interface MatchResult {
   mode: Mode;
   rows: ResultRow[];
+  winner: ResultRow | null;
   score: number;
   kills: number;
   deaths: number;

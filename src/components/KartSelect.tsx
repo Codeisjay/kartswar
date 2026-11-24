@@ -1,111 +1,11 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import * as THREE from "three";
-import { buildKart, disposeRig, type KartRig } from "@/game/karts";
+import { useState } from "react";
 import { AVATARS, GLOW_SWATCHES, KART_PRESETS, type Profile } from "@/game/types";
 import { buyCosmetic, getPaintSkin, getWheelStyle, PAINT_SKINS, WHEEL_STYLES } from "@/game/cosmetics";
+import KartPreview from "./KartPreview";
 
 const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
-
-function KartPreview({ profile }: { profile: Profile }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const sceneRef = useRef<THREE.Scene | null>(null);
-  const rigRef = useRef<KartRig | null>(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.shadowMap.enabled = true;
-    el.appendChild(renderer.domElement);
-    const scene = new THREE.Scene();
-    sceneRef.current = scene;
-    const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
-    camera.position.set(5.2, 3.2, 6.2);
-    camera.lookAt(0, 0.7, 0);
-    scene.add(new THREE.HemisphereLight(0xaac0ff, 0x402060, 1.3));
-    const key = new THREE.DirectionalLight(0xffffff, 2.4);
-    key.position.set(4, 8, 5);
-    key.castShadow = true;
-    scene.add(key);
-    const rim = new THREE.PointLight(0xff3fb0, 40, 20);
-    rim.position.set(-5, 2, -4);
-    scene.add(rim);
-    const ped = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.4, 0.3, 40), new THREE.MeshStandardMaterial({ color: 0x14172b, roughness: 0.5, metalness: 0.6 }));
-    ped.position.y = -0.15;
-    ped.receiveShadow = true;
-    scene.add(ped);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.2, 0.05, 6, 64), new THREE.MeshBasicMaterial({ color: 0x35e8ff }));
-    ring.rotation.x = Math.PI / 2;
-    scene.add(ring);
-
-    const resize = () => {
-      const w = el.clientWidth || 300;
-      const h = el.clientHeight || 300;
-      renderer.setSize(w, h);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-    };
-    resize();
-    const ro = new ResizeObserver(resize);
-    ro.observe(el);
-    let raf = 0;
-    let last = performance.now();
-    const loop = (now: number) => {
-      raf = requestAnimationFrame(loop);
-      const dt = Math.min(0.05, (now - last) / 1000);
-      last = now;
-      if (rigRef.current) {
-        rigRef.current.group.rotation.y += dt * 0.7;
-        rigRef.current.spinners.forEach((s) => (s.rotation.x += dt * 4));
-      }
-      renderer.render(scene, camera);
-    };
-    raf = requestAnimationFrame(loop);
-    return () => {
-      cancelAnimationFrame(raf);
-      ro.disconnect();
-      if (rigRef.current) disposeRig(rigRef.current);
-      rigRef.current = null;
-      renderer.dispose();
-      renderer.forceContextLoss();
-      renderer.domElement.remove();
-      sceneRef.current = null;
-    };
-  }, []);
-
-  useEffect(() => {
-    const scene = sceneRef.current;
-    if (!scene) return;
-    const preset = KART_PRESETS[profile.kartId] ?? KART_PRESETS[0];
-    const paint = getPaintSkin(profile.paintId);
-    let rot = 0.6;
-    if (rigRef.current) {
-      rot = rigRef.current.group.rotation.y;
-      scene.remove(rigRef.current.group);
-      disposeRig(rigRef.current);
-    }
-    const rig = buildKart(preset, {
-      primary: paint.primary ?? undefined,
-      accent: paint.accent ?? undefined,
-      glow: profile.glow,
-      avatar: profile.avatar,
-      wheelStyle: profile.wheelStyle,
-    });
-    rig.group.rotation.y = rot;
-    rig.group.scale.setScalar(1.15);
-    rig.group.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh) o.castShadow = true;
-    });
-    scene.add(rig.group);
-    rigRef.current = rig;
-  }, [profile.kartId, profile.glow, profile.avatar, profile.paintId, profile.wheelStyle]);
-
-  return <div ref={ref} className="h-full w-full" />;
-}
 
 function Bar({ label, value }: { label: string; value: number }) {
   const pct = Math.max(8, Math.min(100, ((value - 0.8) / 0.4) * 100));
@@ -144,8 +44,8 @@ export default function KartSelect({ profile, onChange, onBack }: { profile: Pro
           <span>← Back</span>
         </button>
       </div>
-      <div className="mx-auto mt-4 grid w-full max-w-6xl flex-1 gap-5 lg:grid-cols-[1.2fr_1fr]">
-        <div className="kw-panel relative min-h-[320px] overflow-hidden">
+      <div className="mx-auto mt-4 grid w-full max-w-6xl flex-1 gap-5 lg:grid-cols-[0.85fr_1.15fr]">
+        <div className="kw-panel relative h-[260px] self-start overflow-hidden sm:h-[320px] lg:h-[380px]">
           <KartPreview profile={profile} />
           <div className="pointer-events-none absolute bottom-4 left-5">
             <div className="kw-display text-4xl text-white">{preset.name}</div>
@@ -176,6 +76,7 @@ export default function KartSelect({ profile, onChange, onBack }: { profile: Pro
                   key={k.id}
                   className={`kw-chip p-2 text-left ${profile.kartId === k.id ? "active" : ""}`}
                   onClick={() => onChange({ ...profile, kartId: k.id, glow: k.glow })}
+                  aria-pressed={profile.kartId === k.id}
                 >
                   <div className="mb-1 flex gap-1">
                     <span className="h-3 w-6 rounded-sm" style={{ background: hex(k.primary) }} />

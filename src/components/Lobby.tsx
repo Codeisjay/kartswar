@@ -5,7 +5,7 @@ import { audio } from "@/game/audio";
 import { MAPS, mapDef, randomMapId } from "@/game/maps";
 import { RoomNet, type NetPlayer, type NetRoom } from "@/game/net";
 import { makeRoster, randomCode } from "@/game/roster";
-import { BOT_NAMES, TEAM_COLORS, type Mode, type Profile, type RemoteDesc, type RosterEntry } from "@/game/types";
+import { BOT_NAMES, KART_PRESETS, TEAM_COLORS, type Mode, type Profile, type RemoteDesc, type RosterEntry } from "@/game/types";
 
 export interface LaunchOpts {
   mode: Mode;
@@ -40,7 +40,7 @@ const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
 const botSeat = (): { name: string; avatar: string; kartId: number } => ({
   name: BOT_NAMES[Math.floor(Math.random() * BOT_NAMES.length)],
   avatar: ["🤖", "👾", "🦊", "🐲", "💀", "🥷"][Math.floor(Math.random() * 6)],
-  kartId: Math.floor(Math.random() * 6),
+  kartId: Math.floor(Math.random() * KART_PRESETS.length),
 });
 
 export default function Lobby({ profile, onStart, onBack }: { profile: Profile; onStart: (o: LaunchOpts) => void; onBack: () => void }) {

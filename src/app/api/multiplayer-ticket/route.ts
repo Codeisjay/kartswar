@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { MAX_KART_ID } from "@/game/types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -71,7 +72,7 @@ export async function POST(request: Request) {
 
   const playerName = text(profile.name, "Driver", 20);
   const avatar = text(profile.avatar, "😎", 4);
-  const kartId = typeof profile.kartId === "number" && Number.isInteger(profile.kartId) && profile.kartId >= 0 && profile.kartId <= 5
+  const kartId = typeof profile.kartId === "number" && Number.isInteger(profile.kartId) && profile.kartId >= 0 && profile.kartId <= MAX_KART_ID
     ? profile.kartId
     : 0;
   const claims = {

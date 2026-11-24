@@ -37,6 +37,7 @@ import { RemoteSnapshotBuffer } from "./remoteInterpolation";
 import { NetworkDiagnostics } from "./networkDiagnostics";
 import { NetworkSnapshotScheduler } from "./networkSnapshotScheduler";
 import { getPaintSkin } from "./cosmetics";
+import { selectMatchWinner } from "./results";
 import {
   BOT_NAMES, KART_PRESETS, TEAM_COLORS, WEAPONS, WEAPON_IDS,
   type GameCallbacks, type GameConfig, type HudRow, type HudState, type KartPreset, type MatchResult, type TutorialState,
@@ -2595,7 +2596,7 @@ export class Game {
     } else if (ev.type === "leave") {
       const vk = this.karts.find((x) => x.remoteId === String(payload.playerId ?? ""));
       if (vk) {
-        this.retired.push({ name: vk.name, avatar: vk.avatar, kills: vk.kills, deaths: vk.deaths, score: Math.round(vk.score), team: vk.team, isPlayer: false });
+        this.retired.push({ name: vk.name, avatar: vk.avatar, kartId: vk.preset.id, kills: vk.kills, deaths: vk.deaths, score: Math.round(vk.score), team: vk.team, isPlayer: false });
         if (vk.alive) this.fx.explosion(vk.x, vk.y + 0.3, vk.z, 7, true);
         this.scene.remove(vk.rig.group);
         disposeRig(vk.rig);
@@ -2906,7 +2907,7 @@ export class Game {
       for (let i = this.karts.length - 1; i >= 0; i--) {
         const k = this.karts[i];
         if (!k.isPlayer && !k.alive) {
-          this.retired.push({ name: k.name, avatar: k.avatar, kills: k.kills, deaths: k.deaths, score: Math.round(k.score), team: k.team, isPlayer: false });
+          this.retired.push({ name: k.name, avatar: k.avatar, kartId: k.preset.id, kills: k.kills, deaths: k.deaths, score: Math.round(k.score), team: k.team, isPlayer: false });
           this.scene.remove(k.rig.group);
           disposeRig(k.rig);
           k.tag.remove();
@@ -2948,7 +2949,7 @@ export class Game {
     this.phase = "ended";
     this.snapshotScheduler?.setActive(false);
     const rows: ResultRow[] = [
-      ...this.karts.map((k) => ({ name: k.name, avatar: k.avatar, kills: k.kills, deaths: k.deaths, score: Math.round(k.score), team: k.team, isPlayer: k.isPlayer })),
+      ...this.karts.map((k) => ({ name: k.name, avatar: k.avatar, kartId: k.preset.id, kills: k.kills, deaths: k.deaths, score: Math.round(k.score), team: k.team, isPlayer: k.isPlayer })),
       ...this.retired,
     ];
     rows.sort((a, b) => b.score - a.score
@@ -2969,8 +2970,9 @@ export class Game {
     if (this.mode === "ffa") win = rank === 1 && !draw;
     else if (this.mode === "team") win = this.teamScores[p.team as 0 | 1] > this.teamScores[(1 - p.team) as 0 | 1];
     else win = this.wave >= 5;
+    const winner = selectMatchWinner(this.mode, draw, win, this.teamScores, rows);
     this.result = {
-      mode: this.mode, rows, score: Math.round(p.score), kills: p.kills, deaths: p.deaths, win, draw, rank, teamScores: [...this.teamScores] as [number, number],
+      mode: this.mode, rows, winner, score: Math.round(p.score), kills: p.kills, deaths: p.deaths, win, draw, rank, teamScores: [...this.teamScores] as [number, number],
       wave: this.wave, duration: this.elapsed, playerTeam: p.team,
     };
     for (const k of this.karts) {

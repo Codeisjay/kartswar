@@ -15,6 +15,7 @@ export interface KartRig {
   primaryMat: THREE.MeshStandardMaterial;
   ringMat: THREE.MeshBasicMaterial;
   ownedMaterials: THREE.Material[];
+  ownedTextures: THREE.Texture[];
 }
 
 let glowTex: THREE.Texture | null = null;
@@ -68,6 +69,7 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
   const primary = opts.primary ?? preset.primary;
   const glow = opts.glow ?? preset.glow;
   const owned: THREE.Material[] = [];
+  const ownedTextures: THREE.Texture[] = [];
   const std = (color: number, o: THREE.MeshStandardMaterialParameters = {}) => {
     const m = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.25, flatShading: true, ...o });
     owned.push(m);
@@ -77,6 +79,11 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
     const m = new THREE.MeshBasicMaterial({ color, ...o });
     owned.push(m);
     return m;
+  };
+  const numberedPlate = (num: string, background: string) => {
+    const texture = numberTexture(num, background);
+    ownedTextures.push(texture);
+    return basic(0xffffff, { map: texture });
   };
   const group = new THREE.Group();
   const body = new THREE.Group();
@@ -162,7 +169,7 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
     add(boxGeo, darkMat, [0, 0.62, -0.25], [0.8, 0.2, 0.6]);
     add(boxGeo, metalMat, [0, 0.62, -1.0], [0.5, 0.45, 0.45]);
     add(cylGeo, metalMat, [0.2, 0.75, -1.25], [0.07, 0.4, 0.07]).rotation.x = Math.PI / 2;
-    add(boxGeo, new THREE.MeshBasicMaterial({ map: numberTexture(preset.num, "#ffffff") }), [0, 0.72, 1.38], [0.38, 0.03, 0.38]);
+    add(boxGeo, numberedPlate(preset.num, "#ffffff"), [0, 0.72, 1.38], [0.38, 0.03, 0.38]);
     add(cylGeo, darkMat, [0, 0.9, 0.55], [0.17, 0.05, 0.17]).rotation.x = 0.8;
     driver(1.0, -0.1);
     wheel(-0.95, 1.25, 0.36, 0.3, true, accentMat);
@@ -194,6 +201,59 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
     wheel(0.98, -1.0, 0.52, 0.46, false, rim);
     flame(-0.3, 1.0, -1.5);
     flame(0.3, 1.0, -1.5);
+  } else if (preset.shape === "roadster") {
+    add(sphereGeo, primaryMat, [0, 0.48, 0], [0.72, 0.25, 1.2]);
+    add(sphereGeo, primaryMat, [0, 0.54, 0.78], [0.63, 0.22, 0.62]);
+    add(sphereGeo, primaryMat, [0, 0.55, -0.72], [0.65, 0.24, 0.53]);
+    add(boxGeo, accentMat, [0, 0.4, 1.42], [1.32, 0.16, 0.22]);
+    add(boxGeo, accentMat, [0, 0.67, -1.05], [1.14, 0.08, 0.28]);
+    add(cylGeo, metalMat, [-0.39, 0.91, 0.04], [0.04, 0.34, 0.04]);
+    add(cylGeo, metalMat, [0.39, 0.91, 0.04], [0.04, 0.34, 0.04]);
+    add(boxGeo, accentMat, [0, 1.08, 0.04], [0.84, 0.06, 0.06]);
+    add(boxGeo, darkMat, [0, 0.69, 1.11], [0.47, 0.035, 0.38]);
+    add(boxGeo, numberedPlate(preset.num, "#fff3f8"), [0, 0.72, 1.1], [0.36, 0.02, 0.3]);
+    add(sphereGeo, basic(0xfff0a8), [-0.44, 0.68, 1.13], [0.13, 0.08, 0.06]);
+    add(sphereGeo, basic(0xfff0a8), [0.44, 0.68, 1.13], [0.13, 0.08, 0.06]);
+    add(boxGeo, accentMat, [-0.69, 0.42, 0], [0.12, 0.12, 1.55]);
+    add(boxGeo, accentMat, [0.69, 0.42, 0], [0.12, 0.12, 1.55]);
+    add(cylGeo, metalMat, [-0.3, 0.74, -1.1], [0.045, 0.28, 0.045]).rotation.x = Math.PI / 2;
+    add(cylGeo, metalMat, [0.3, 0.74, -1.1], [0.045, 0.28, 0.045]).rotation.x = Math.PI / 2;
+    driver(1.0, -0.22);
+    wheel(-0.84, 0.96, 0.36, 0.32, true, accentMat);
+    wheel(0.84, 0.96, 0.36, 0.32, true, accentMat);
+    wheel(-0.88, -0.92, 0.4, 0.36, false, accentMat);
+    wheel(0.88, -0.92, 0.4, 0.36, false, accentMat);
+    flame(-0.22, 0.61, -1.37);
+    flame(0.22, 0.61, -1.37);
+  } else if (preset.shape === "rally") {
+    add(boxGeo, darkMat, [0, 0.46, 0], [1.28, 0.2, 2.45]);
+    add(sphereGeo, primaryMat, [0, 0.62, 0.7], [0.72, 0.28, 0.76]);
+    add(boxGeo, primaryMat, [0, 0.55, -0.78], [1.12, 0.28, 0.88]);
+    add(boxGeo, accentMat, [0, 0.46, 1.4], [1.5, 0.2, 0.22]);
+    add(boxGeo, darkMat, [0, 0.69, 1.23], [0.78, 0.24, 0.08]);
+    for (const x of [-0.45, 0.45]) {
+      add(sphereGeo, primaryMat, [x, 0.57, 0.86], [0.29, 0.23, 0.48]);
+      add(sphereGeo, primaryMat, [x, 0.57, -0.89], [0.31, 0.25, 0.5]);
+      add(sphereGeo, basic(0xfff0a8), [x, 0.76, 1.05], [0.12, 0.09, 0.08]);
+    }
+    add(cylGeo, metalMat, [-0.48, 0.97, -0.32], [0.045, 0.52, 0.045]);
+    add(cylGeo, metalMat, [0.48, 0.97, -0.32], [0.045, 0.52, 0.045]);
+    add(boxGeo, darkMat, [0, 1.23, -0.32], [1.0, 0.09, 0.08]);
+    add(boxGeo, accentMat, [0, 1.31, -0.32], [0.54, 0.07, 0.08]);
+    add(boxGeo, accentMat, [-0.68, 0.67, -0.22], [0.08, 0.09, 1.38]);
+    add(boxGeo, accentMat, [0.68, 0.67, -0.22], [0.08, 0.09, 1.38]);
+    add(boxGeo, darkMat, [0, 0.76, 0.72], [0.55, 0.035, 0.42]);
+    add(boxGeo, numberedPlate(preset.num, "#fff9e7"), [0, 0.78, 0.72], [0.42, 0.02, 0.32]);
+    add(cylGeo, accentMat, [-0.25, 1.02, 1.05], [0.045, 0.18, 0.045]);
+    add(cylGeo, accentMat, [0.25, 1.02, 1.05], [0.045, 0.18, 0.045]);
+    add(boxGeo, accentMat, [0, 1.12, 1.05], [0.62, 0.07, 0.12]);
+    driver(1.08, -0.24);
+    wheel(-0.98, 1.0, 0.47, 0.4, true, accentMat);
+    wheel(0.98, 1.0, 0.47, 0.4, true, accentMat);
+    wheel(-1.0, -1.0, 0.5, 0.44, false, accentMat);
+    wheel(1.0, -1.0, 0.5, 0.44, false, accentMat);
+    flame(-0.3, 0.85, -1.42);
+    flame(0.3, 0.85, -1.42);
   } else {
     // hover saucer
     add(cylGeo, primaryMat, [0, 0.65, 0], [1.45, 0.3, 1.45]);
@@ -250,11 +310,12 @@ export function buildKart(preset: KartPreset, opts: BuildOpts = {}): KartRig {
   group.add(shield);
 
   if (!driverCharacter) throw new Error("Kart preset did not create its driver character.");
-  return { group, body, frontPivots, spinners, flames, shield, underglow, driver: driverCharacter, bodyMats, primaryMat, ringMat, ownedMaterials: owned };
+  return { group, body, frontPivots, spinners, flames, shield, underglow, driver: driverCharacter, bodyMats, primaryMat, ringMat, ownedMaterials: owned, ownedTextures };
 }
 
 export function disposeRig(r: KartRig) {
   r.ownedMaterials.forEach((m) => m.dispose());
+  r.ownedTextures.forEach((texture) => texture.dispose());
   (r.underglow.geometry as THREE.BufferGeometry).dispose();
   (r.shield.geometry as THREE.BufferGeometry).dispose();
 }

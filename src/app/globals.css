@@ -351,6 +351,34 @@ body {
 .kw-pop {
   animation: kw-pop 0.35s ease-out both;
 }
+@keyframes kw-coin-collect {
+  0% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--coin-x)), calc(-50% + var(--coin-y))) rotateY(0deg) scale(0.55);
+  }
+  18% { opacity: 1; }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) rotateY(720deg) scale(0.2);
+  }
+}
+.kw-coin-flight {
+  position: absolute;
+  top: 35%;
+  left: 50%;
+  z-index: 20;
+  font-size: 1.2rem;
+  line-height: 1;
+  filter: drop-shadow(0 0 6px rgba(255, 210, 31, 0.8));
+  animation: kw-coin-collect 1.15s cubic-bezier(0.2, 0.8, 0.25, 1) both;
+  will-change: transform, opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kw-coin-flight {
+    animation: none;
+    opacity: 0;
+  }
+}
 .tutorial-key {
   display: inline-flex;
   min-width: 2rem;
