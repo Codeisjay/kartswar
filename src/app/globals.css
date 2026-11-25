@@ -105,6 +105,7 @@ body {
   --touch-fire-size: clamp(4rem, 22vw, 6rem);
   --touch-small-size: clamp(3rem, 17vw, 4rem);
   --touch-gap: clamp(0.35rem, 2vw, 0.75rem);
+  --touch-boost-size: clamp(2.5rem, 12vw, 3.2rem);
 }
 .kw-touch-fire {
   position: absolute;
@@ -114,21 +115,36 @@ body {
   height: var(--touch-fire-size);
   font-size: clamp(0.8rem, 4vw, 1.125rem);
 }
-.kw-touch-drift {
+.kw-touch-accelerate,
+.kw-touch-brake {
   position: absolute;
   width: var(--touch-small-size);
   height: var(--touch-small-size);
-  right: calc(var(--touch-fire-size) + var(--touch-gap));
-  bottom: var(--touch-gap);
   font-size: clamp(0.55rem, 3vw, 0.75rem);
+}
+.kw-touch-accelerate {
+  left: 0;
+  bottom: 0;
+  border-color: rgba(134, 239, 172, 0.8);
+  background: linear-gradient(160deg, rgba(34, 150, 88, 0.92), rgba(10, 63, 48, 0.96));
+  box-shadow: 0 0 16px rgba(74, 222, 128, 0.22);
+}
+.kw-touch-brake {
+  left: 0;
+  bottom: calc(var(--touch-small-size) + var(--touch-gap));
+  border-color: rgba(253, 186, 116, 0.8);
+  background: linear-gradient(160deg, rgba(191, 82, 45, 0.92), rgba(79, 33, 39, 0.96));
+  box-shadow: 0 0 16px rgba(251, 146, 60, 0.2);
 }
 .kw-touch-boost {
   position: absolute;
-  width: var(--touch-small-size);
-  height: var(--touch-small-size);
-  right: calc((var(--touch-fire-size) - var(--touch-small-size)) / 2);
+  width: var(--touch-boost-size);
+  height: var(--touch-boost-size);
+  right: calc((var(--touch-fire-size) - var(--touch-boost-size)) / 2);
   bottom: calc(var(--touch-fire-size) + var(--touch-gap));
-  font-size: clamp(0.55rem, 3vw, 0.75rem);
+  border-color: rgba(134, 239, 172, 0.8);
+  background: linear-gradient(160deg, rgba(34, 150, 88, 0.88), rgba(10, 63, 48, 0.95));
+  font-size: clamp(0.55rem, 3vw, 0.7rem);
 }
 @media (orientation: landscape) and (max-height: 500px) {
   .kw-touch-controls {
@@ -144,6 +160,7 @@ body {
     --touch-fire-size: clamp(3.6rem, 12vh, 4.2rem);
     --touch-small-size: clamp(2.7rem, 9vh, 3rem);
     --touch-gap: 0.3rem;
+    --touch-boost-size: clamp(2.4rem, 11vh, 3rem);
   }
 }
 @media (prefers-reduced-motion: reduce) {

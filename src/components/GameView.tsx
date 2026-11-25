@@ -53,7 +53,7 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
   const [restartStartAt, setRestartStartAt] = useState<number | null>(null);
   const [restartCountdown, setRestartCountdown] = useState<number | null>(null);
   const [contextTip, setContextTip] = useState<string | null>(
-    cfg.tutorial ? null : cfg.touch ? "AUTO-DRIVE · HOLD ◀ ▶ TO STEER · FIRE · DRIFT" : "W / ↑ ACCELERATE · SPACE DRIFT · SHIFT BOOST · F FIRE",
+    cfg.tutorial ? null : cfg.touch ? "◀ ▶ STEER · ▲ ACCELERATE · ▼ BRAKE · FIRE" : "W / ↑ ACCELERATE · SPACE DRIFT · SHIFT BOOST · F FIRE",
   );
 
   const handleEvent = useCallback((e: GameEvent) => {

@@ -6,7 +6,7 @@ export interface TouchDriveTarget {
 }
 
 export function createTouchInput(): TouchInput {
-  return { steer: 0, throttle: 1, drift: false, boost: false, fire: false };
+  return { steer: 0, throttle: 0, drift: false, boost: false, fire: false };
 }
 
 export function smoothTouchDrive(

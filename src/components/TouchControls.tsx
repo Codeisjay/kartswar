@@ -4,21 +4,22 @@ import { useEffect, useRef, useState } from "react";
 import type { TouchInput } from "@/game/types";
 import { createTouchInput, smoothTouchDrive } from "@/game/touchControls";
 
-type Action = "left" | "right" | "fire" | "drift" | "boost";
+type Action = "left" | "right" | "accelerate" | "brake" | "fire" | "boost";
 
 interface Props {
   onChange: (t: TouchInput | null) => void;
 }
 
-const DRIVE_ACTIONS: Action[] = ["left", "right"];
+const DRIVE_ACTIONS: Action[] = ["left", "right", "accelerate", "brake"];
 
 export default function TouchControls({ onChange }: Props) {
   const input = useRef<TouchInput>(createTouchInput());
   const held = useRef<Record<Action, boolean>>({
     left: false,
     right: false,
+    accelerate: false,
+    brake: false,
     fire: false,
-    drift: false,
     boost: false,
   });
   const pointerActions = useRef(new Map<number, Action>());
@@ -41,13 +42,15 @@ export default function TouchControls({ onChange }: Props) {
     const dt = lastFrameTime.current === null ? 0 : (now - lastFrameTime.current) / 1000;
     lastFrameTime.current = now;
     const steer = Number(held.current.right) - Number(held.current.left);
-    const next = smoothTouchDrive(input.current, { steer, throttle: 1 }, dt);
-    const changed = next.steer !== input.current.steer;
+    const throttle = Number(held.current.accelerate) - Number(held.current.brake);
+    const next = smoothTouchDrive(input.current, { steer, throttle }, dt);
+    const changed = next.steer !== input.current.steer || next.throttle !== input.current.throttle;
     input.current.steer = next.steer;
+    input.current.throttle = next.throttle;
     if (changed) publish();
 
     const hasHeldDriveInput = DRIVE_ACTIONS.some((action) => held.current[action]);
-    if (hasHeldDriveInput || next.steer !== 0) {
+    if (hasHeldDriveInput || next.steer !== 0 || next.throttle !== 0) {
       frame.current = requestAnimationFrame(updateDrive);
     } else {
       stopFrame();
@@ -64,7 +67,7 @@ export default function TouchControls({ onChange }: Props) {
     held.current[action] = true;
     setPressed((previous) => ({ ...previous, [action]: true }));
 
-    if (action === "fire" || action === "drift" || action === "boost") {
+    if (action === "fire" || action === "boost") {
       input.current[action] = true;
       publish();
     } else {
@@ -79,7 +82,7 @@ export default function TouchControls({ onChange }: Props) {
     held.current[action] = Array.from(pointerActions.current.values()).includes(action);
     setPressed((previous) => ({ ...previous, [action]: held.current[action] }));
 
-    if (action === "fire" || action === "drift" || action === "boost") {
+    if (action === "fire" || action === "boost") {
       input.current[action] = held.current[action];
       publish();
     } else {
@@ -92,10 +95,9 @@ export default function TouchControls({ onChange }: Props) {
     for (const action of Object.keys(held.current) as Action[]) held.current[action] = false;
     if (updateVisual) setPressed({});
     input.current.fire = false;
-    input.current.drift = false;
     input.current.boost = false;
     input.current.steer = 0;
-    input.current.throttle = 1;
+    input.current.throttle = 0;
     stopFrame();
     callback.current(null);
   };
@@ -141,8 +143,9 @@ export default function TouchControls({ onChange }: Props) {
       </div>
 
       <div className="kw-touch-actions pointer-events-auto relative" style={{ touchAction: "none" }}>
+        {button("accelerate", "Accelerate", "▲", "kw-touch-accelerate kw-display")}
+        {button("brake", "Brake or reverse", "▼", "kw-touch-brake kw-display")}
         {button("fire", "Fire weapon", "FIRE", "kw-touch-fire kw-display")}
-        {button("drift", "Drift", "DRIFT", "kw-touch-drift kw-display")}
         {button("boost", "Boost", "BOOST", "kw-touch-boost kw-display")}
       </div>
     </div>

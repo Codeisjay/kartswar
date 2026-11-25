@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { createTouchInput, smoothTouchDrive } from "./touchControls";
 
 const initialInput = createTouchInput();
-assert.equal(initialInput.throttle, 1, "mobile inputs automatically accelerate");
-assert.equal(initialInput.steer, 0, "mobile inputs drive straight until steering");
-assert.equal(initialInput.drift, false, "drift is released by default");
+assert.equal(initialInput.throttle, 0, "vehicle is neutral until accelerator or brake is held");
+assert.equal(initialInput.steer, 0, "steering is neutral until an arrow is held");
+assert.equal(initialInput.drift, false, "drift is not bound to a mobile control");
 
 const initial = { steer: 0, throttle: 0 };
 const firstStep = smoothTouchDrive(initial, { steer: -1, throttle: 1 }, 1 / 60);
