@@ -124,14 +124,14 @@ body {
 }
 .kw-touch-accelerate {
   left: 0;
-  bottom: 0;
+  bottom: calc(var(--touch-small-size) + var(--touch-gap));
   border-color: rgba(134, 239, 172, 0.8);
   background: linear-gradient(160deg, rgba(34, 150, 88, 0.92), rgba(10, 63, 48, 0.96));
   box-shadow: 0 0 16px rgba(74, 222, 128, 0.22);
 }
 .kw-touch-brake {
   left: 0;
-  bottom: calc(var(--touch-small-size) + var(--touch-gap));
+  bottom: 0;
   border-color: rgba(253, 186, 116, 0.8);
   background: linear-gradient(160deg, rgba(191, 82, 45, 0.92), rgba(79, 33, 39, 0.96));
   box-shadow: 0 0 16px rgba(251, 146, 60, 0.2);
