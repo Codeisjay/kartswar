@@ -151,16 +151,21 @@ body {
     padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
   }
   .kw-touch-steer-arrow {
-    width: clamp(3.2rem, 13vh, 4.1rem);
-    height: clamp(3.2rem, 13vh, 4.1rem);
+    width: clamp(4rem, 14vh, 4.5rem);
+    height: clamp(4rem, 14vh, 4.5rem);
+    font-size: clamp(2rem, 7vh, 2.5rem);
   }
   .kw-touch-actions {
-    width: clamp(8rem, 22vw, 10rem);
-    height: clamp(6.5rem, 28vh, 8rem);
-    --touch-fire-size: clamp(3.6rem, 12vh, 4.2rem);
-    --touch-small-size: clamp(2.7rem, 9vh, 3rem);
-    --touch-gap: 0.3rem;
-    --touch-boost-size: clamp(2.4rem, 11vh, 3rem);
+    width: clamp(9rem, 22vw, 10rem);
+    height: clamp(7.5rem, 32vh, 8.5rem);
+    --touch-fire-size: clamp(4rem, 14vh, 4.5rem);
+    --touch-small-size: clamp(3.4rem, 13vh, 3.8rem);
+    --touch-gap: 0.35rem;
+    --touch-boost-size: clamp(3.1rem, 11vh, 3.5rem);
+  }
+  .kw-touch-accelerate,
+  .kw-touch-brake {
+    font-size: clamp(0.9rem, 3.8vh, 1.15rem);
   }
 }
 @media (prefers-reduced-motion: reduce) {
