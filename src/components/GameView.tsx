@@ -42,6 +42,7 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
   const [hit, setHit] = useState<{ id: number; kill: boolean } | null>(null);
   const [paused, setPaused] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [vol, setVol] = useState(cfg.settings.master);
   const [result, setResult] = useState<{ r: MatchResult; scores: ScoreEntry[]; rank: number; creditsEarned: number } | null>(null);
   const [bestBefore, setBestBefore] = useState(0);
@@ -75,6 +76,28 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
     if (resultRef.current) return;
     gameRef.current?.setPaused(p);
     setPaused(p);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else if (document.fullscreenEnabled && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        setToast({ id: performance.now(), text: "FULLSCREEN IS NOT AVAILABLE", color: "#fca5a5" });
+      }
+    } catch (error: unknown) {
+      console.error("Could not toggle fullscreen", error);
+      setToast({ id: performance.now(), text: "FULLSCREEN REQUEST FAILED", color: "#fca5a5" });
+    }
+  };
+
+  useEffect(() => {
+    const syncFullscreenState = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    syncFullscreenState();
+    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
   }, []);
 
   useEffect(() => {
@@ -326,6 +349,18 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
               <button data-ui onClick={() => setHelpOpen(true)} className="kw-chip pointer-events-auto h-9 px-2 text-xs font-bold" aria-label="Help and controls">
                 HELP
               </button>
+              {isTouch && (
+                <button
+                  data-ui
+                  onClick={() => void toggleFullscreen()}
+                  className="kw-chip kw-landscape-fullscreen pointer-events-auto h-9 w-9 text-lg font-bold"
+                  aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                  aria-pressed={isFullscreen}
+                  title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                >
+                  ⛶
+                </button>
+              )}
               <button data-ui onClick={() => setPause(true)} className="kw-chip pointer-events-auto h-9 w-9 text-sm font-bold" aria-label="Pause">
                 ❚❚
               </button>

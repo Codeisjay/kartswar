@@ -146,9 +146,17 @@ body {
   background: linear-gradient(160deg, rgba(34, 150, 88, 0.88), rgba(10, 63, 48, 0.95));
   font-size: clamp(0.55rem, 3vw, 0.7rem);
 }
+.kw-landscape-fullscreen {
+  display: none;
+}
 @media (orientation: landscape) and (max-height: 500px) {
   .kw-touch-controls {
     padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
+  }
+  .kw-landscape-fullscreen {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   .kw-touch-steer-arrow {
     width: clamp(4rem, 14vh, 4.5rem);
