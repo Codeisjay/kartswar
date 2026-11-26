@@ -247,7 +247,7 @@ export default function KartWarsApp() {
 
   if (screen === "game" && cfg) {
     return (
-      <main className="fixed inset-0">
+      <main className="kw-game-viewport fixed inset-x-0 top-0">
         <GameView key={gameKey} cfg={cfg} onRestart={restart} onExit={exitGame} restartError={networkError} />
       </main>
     );

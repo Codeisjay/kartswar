@@ -524,8 +524,8 @@ export default function GameView({ cfg, onExit, onRestart, restartError }: Props
 
       {/* pause menu */}
       {paused && !result && (
-        <div data-ui className="absolute inset-0 z-40 flex items-center justify-center bg-black/65 backdrop-blur-sm">
-          <div className="kw-panel kw-pop w-[min(92vw,420px)] p-7 text-center">
+        <div data-ui className="absolute inset-0 z-40 flex justify-center overflow-y-auto bg-black/65 p-3 backdrop-blur-sm">
+          <div className="kw-panel kw-pop my-auto w-[min(92vw,420px)] shrink-0 p-7 text-center">
             <h2 className="kw-display kw-title text-6xl">PAUSED</h2>
             <div className="mt-6 flex flex-col items-stretch gap-3">
               <button className="kw-btn" onClick={() => setPause(false)}>

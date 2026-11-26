@@ -46,6 +46,11 @@ body {
   border-radius: 14px;
 }
 
+.kw-game-viewport {
+  height: 100vh;
+  height: 100dvh;
+}
+
 .kw-touch-controls {
   gap: clamp(0.35rem, 2vw, 0.75rem);
   padding: 0 max(0.75rem, env(safe-area-inset-right)) max(1.5rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
